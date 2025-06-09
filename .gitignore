@@ -1,0 +1,6 @@
+/cache/
+/coverage/
+/dependencies/
+/out/
+/.env
+/lcov.info
