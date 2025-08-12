@@ -5,17 +5,23 @@ pragma solidity ^0.8.22;
 import { IERC20Metadata } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC20Metadata.sol";
 import { IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { IERC20, IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
-import { IDLGTEv1, IGOHM, IOlympusStaking, Math, SafeCast } from "../../src/policies/vault/CallistoVaultLogic.sol";
+import { IGOHM } from "../../src/interfaces/IGOHM.sol";
+import { IDLGTEv1 } from "../../src/interfaces/IMonoCooler.sol";
+import { IOlympusStaking } from "../../src/interfaces/IOlympusStaking.sol";
 import { Ethereum } from "../test-common/ForkConstants.sol";
 import { IMonoCoolerExtended } from "../test-common/interfaces/IMonoCoolerExtended.sol";
 import { IOlympusHeart } from "../test-common/interfaces/IOlympusHeart.sol";
-import { Test } from "forge-std/Test.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { Test } from "forge-std-1.9.6/Test.sol";
 
 contract OlympusBehaviorResearchEthereumTests is Test {
     using Math for uint256;
     using Math for uint128;
     using SafeCast for uint256;
     using SafeCast for int256;
+    using SafeERC20 for IERC20;
 
     IGOHM gOHMToken;
     IMonoCoolerExtended olympusCooler;
@@ -25,7 +31,7 @@ contract OlympusBehaviorResearchEthereumTests is Test {
     uint256 ohmDecimals;
 
     function setUp() external {
-        vm.createSelectFork(vm.envOr("ETHEREUM_RPC_URL", string("https://eth.blockrazor.xyz")));
+        vm.createSelectFork("mainnet", 23_016_996);
 
         gOHMToken = IGOHM(Ethereum.GOHM);
         olympusCooler = IMonoCoolerExtended(Ethereum.OLYMPUS_COOLER);
@@ -67,7 +73,7 @@ contract OlympusBehaviorResearchEthereumTests is Test {
         uint256 gOHMAmount = gOHM.balanceTo(ohmAmount);
         // Imitate gOHM getting from Olympus Staking.
         vm.prank(Ethereum.GOHM_HOLDER);
-        gOHM.transfer(address(this), gOHMAmount);
+        IERC20(address(gOHM)).safeTransfer(address(this), gOHMAmount);
 
         for (uint256 i = 0; i < intervalNum; ++i) {
             snapshotID = vm.snapshotState();
@@ -118,7 +124,7 @@ contract OlympusBehaviorResearchEthereumTests is Test {
             if (intervals[i] == 0) {
                 // Add 1 wei of USDS to withdraw the entire gOHM collateral because of sUSDS rounding.
                 vm.prank(Ethereum.USDS_HOLDER);
-                usds.transfer(address(this), 1);
+                usds.safeTransfer(address(this), 1);
             }
 
             // Repay the USDS debt.
@@ -145,6 +151,8 @@ contract OlympusBehaviorResearchEthereumTests is Test {
 }
 
 contract OlympusOHMExchangeEthereumTests is Test {
+    using SafeERC20 for IERC20;
+
     IERC20Metadata ohm;
     IGOHM gOHM;
     IOlympusStaking olympusStaking;
@@ -154,8 +162,7 @@ contract OlympusOHMExchangeEthereumTests is Test {
     uint256 gOHMDecimals;
 
     function setUp() public {
-        vm.createSelectFork(vm.envOr("ETHEREUM_RPC_URL", string("https://eth.blockrazor.xyz")));
-        // 22245271
+        vm.createSelectFork("mainnet", 23_016_996);
 
         ohm = IERC20Metadata(Ethereum.OHM);
         ohmDecimals = 10 ** ohm.decimals();
@@ -183,7 +190,7 @@ contract OlympusOHMExchangeEthereumTests is Test {
     function testUserExchangesOHMToGOHM() external {
         uint256 ohmAmount = _toOHM(100);
         vm.prank(Ethereum.OHM_HOLDER);
-        ohm.transfer(address(this), ohmAmount);
+        IERC20(address(ohm)).safeTransfer(address(this), ohmAmount);
 
         uint256 expectedGOHM = gOHM.balanceTo(ohmAmount);
 
@@ -198,7 +205,7 @@ contract OlympusOHMExchangeEthereumTests is Test {
     function testUserExchangesGOHMToOHM() external {
         uint256 gOHMAmount = _toGOHM(10);
         vm.prank(Ethereum.GOHM_HOLDER);
-        gOHM.transfer(address(this), gOHMAmount);
+        IERC20(address(gOHM)).safeTransfer(address(this), gOHMAmount);
 
         uint256 expectedOHM = gOHM.balanceFrom(gOHMAmount);
 

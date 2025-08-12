@@ -1,6 +1,12 @@
-/cache/
-/coverage/
-/dependencies/
-/out/
-/.env
-/lcov.info
+.nx
+cache
+coverage
+node_modules
+out
+lcov.info
+
+
+# Soldeer
+/dependencies
+
+broadcast

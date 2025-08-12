@@ -1,6 +1,6 @@
 [profile.default]
 ffi = true
-ast = true              # Used for `test/lib/quabi`.
+ast = true # Used for `test/lib/quabi`.
 solc_version = "0.8.30"
 optimizer = true
 optimizer-runs = 200
@@ -11,20 +11,25 @@ out = "out"
 libs = ["dependencies"]
 test = "test"
 cache_path = "cache"
+rpc_url = "http://0.0.0.0:8545"
 
 [profile.default.fmt]
+# copied from Royco
 line_length = 120
 bracket_spacing = true
 number_underscore = "thousands"
 wrap_comments = true
 int_types = "long"
+#multiline_func_header = "all"
 quote_style = "double"
-multiline_func_header = "attributes_first"
+# end of copied from Royco
+#single_line_statement_blocks = "multi"
+multiline_func_header = "attributes_first" # improve readability
 sort_imports = true
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
 
 [profile.default.fuzz]
 runs = 256
-
 [profile.default.invariant]
 runs = 256
 
@@ -34,5 +39,10 @@ mainnet = "${MAINNET_RPC_URL}"
 [dependencies]
 forge-std = "1.9.6"
 "@openzeppelin-contracts" = "5.3.0"
-olympus-v3 = { git = "https://github.com/OlympusDAO/olympus-v3.git", branch = "master", version = "3.0.0" }
+#olympus-v3 = { git = "https://github.com/OlympusDAO/olympus-v3.git", branch = "master", version = "3.0.0" }
+#olympus-v2 = { git = "https://github.com/OlympusDAO/olympus-contracts.git", branch = "main", version = "2.0.0" }
 solmate = "6.8.0"
+solady = "0.1.19"
+
+[lint]
+exclude_lints = ["mixed-case-variable","mixed-case-function"]

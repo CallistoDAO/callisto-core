@@ -2,10 +2,20 @@
 
 pragma solidity ^0.8.29;
 
-import {
-    ERC20, ERC4626, IERC20
-} from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/extensions/ERC4626.sol";
+import { ICOLLAR } from "../../src/interfaces/ICOLLAR.sol";
 
-contract MockStabilityPool is ERC4626 {
-    constructor(IERC20 asset_) ERC4626(asset_) ERC20("Stability Pool", "Stability Pool") { }
+interface IMockDebtToken is ICOLLAR {
+    function sendToPool(address sender, uint256 amount) external;
+}
+
+contract MockStabilityPool {
+    address debtToken;
+
+    constructor(address debtToken_) {
+        debtToken = debtToken_;
+    }
+
+    function deposit(uint256 amount) external {
+        IMockDebtToken(debtToken).sendToPool(msg.sender, amount);
+    }
 }

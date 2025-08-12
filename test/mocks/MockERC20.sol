@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import { ERC20 } from "solmate-6.8.0/src/tokens/ERC20.sol";
+import { ERC20 } from "solmate-6.8.0/tokens/ERC20.sol";
 
 contract MockERC20 is ERC20 {
     constructor(string memory _name, string memory _symbol, uint8 _decimals) ERC20(_name, _symbol, _decimals) { }
@@ -22,5 +22,11 @@ contract MockERC20 is ERC20 {
 
         allowance[msg.sender][from] = currentAllowance - value;
         _burn(from, value);
+    }
+
+    function _transfer(address from, address to, uint256 amount) internal {
+        _burn(from, amount);
+        _mint(to, amount);
+        emit Transfer(from, to, amount);
     }
 }

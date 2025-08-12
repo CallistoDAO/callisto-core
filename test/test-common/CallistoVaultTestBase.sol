@@ -6,11 +6,11 @@ import { IERC20, IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3
 import { CallistoPSM } from "../../src/external/CallistoPSM.sol";
 import { ConverterToWadDebt } from "../../src/external/ConverterToWadDebt.sol";
 import { DebtTokenMigrator } from "../../src/external/DebtTokenMigrator.sol";
+import { PSMStrategy } from "../../src/external/PSMStrategy.sol";
 import { VaultStrategy } from "../../src/external/VaultStrategy.sol";
 import { IGOHM } from "../../src/interfaces/IGOHM.sol";
-import { CommonRoles } from "../../src/policies/common/CommonRoles.sol";
-import { CallistoVault } from "../../src/policies/vault/CallistoVault.sol";
-import { CallistoVaultLogic, SafeCast } from "../../src/policies/vault/CallistoVaultLogic.sol";
+import { CommonRoles } from "../../src/libraries/CommonRoles.sol";
+import { CallistoVault } from "../../src/policies/CallistoVault.sol";
 import { MockCOLLAR } from "../mocks/MockCOLLAR.sol";
 import { MockCoolerTreasuryBorrower } from "../mocks/MockCoolerTreasuryBorrower.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
@@ -19,12 +19,14 @@ import { IDLGTEv1, MockMonoCooler } from "../mocks/MockMonoCooler.sol";
 import { MockStabilityPool } from "../mocks/MockStabilityPool.sol";
 import { MockStaking } from "../mocks/MockStaking.sol";
 import { MockSusds } from "../mocks/MockSusds.sol";
+import { CallistoVaultTester } from "../testers/CallstoVaultTester.sol";
 import { Actions, KernelTestBase } from "./KernelTestBase.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract CallistoVaultTestBase is KernelTestBase {
     using SafeCast for *;
 
-    uint256 public constant MIN_DEPOSIT = 1e5;
+    uint256 private constant MIN_DEPOSIT = 10e9;
     uint256 public constant MAX_DEPOSIT = 1e18;
 
     MockGohm public gohm;
@@ -40,9 +42,13 @@ contract CallistoVaultTestBase is KernelTestBase {
     address public multisig;
     address public heart;
     address public exchanger;
+    PSMStrategy public psmStrategy;
     DebtTokenMigrator public debtTokenMigrator;
     ConverterToWadDebt public converterToWadDebt;
     VaultStrategy public vaultStrategy;
+    MockStabilityPool public stabilityPool;
+
+    bytes public err;
 
     function setUp() public virtual override {
         super.setUp();
@@ -66,12 +72,20 @@ contract CallistoVaultTestBase is KernelTestBase {
         staking = new MockStaking(address(ohm), address(sohm), address(gohm), 0, 0, 0);
         converterToWadDebt = new ConverterToWadDebt();
 
-        debtTokenMigrator = new DebtTokenMigrator(admin, address(cooler));
-        psm = new CallistoPSM(admin, address(usds), address(collar), address(susds), address(debtTokenMigrator));
-
-        vaultStrategy = new VaultStrategy(
-            admin, IERC20(address(usds)), address(psm), IERC4626(address(susds)), address(debtTokenMigrator)
+        vm.startPrank(admin);
+        stabilityPool = new MockStabilityPool(address(collar));
+        vm.stopPrank();
+        psmStrategy = new PSMStrategy(
+            admin,
+            address(stabilityPool),
+            address(collar),
+            makeAddr("[ False auctioneer ]"),
+            makeAddr("[ False Callisto treasury ]")
         );
+        debtTokenMigrator = new DebtTokenMigrator(admin, address(cooler));
+        psm = new CallistoPSM(admin, address(usds), address(collar), address(susds), address(psmStrategy));
+
+        vaultStrategy = new VaultStrategy(admin, IERC20(address(usds)), address(psm), IERC4626(address(susds)));
 
         vm.prank(admin);
         debtTokenMigrator.initializePSMAddress(address(psm));
@@ -87,15 +101,14 @@ contract CallistoVaultTestBase is KernelTestBase {
         vm.label(address(collar), "[ COLLAR ]");
 
         // Deploy the Callisto vault policy.
-        vault = new CallistoVault(
+        vault = new CallistoVaultTester(
             kernel,
-            CallistoVaultLogic.InitialParameters({
+            CallistoVault.InitialParameters({
                 asset: address(ohm),
                 olympusStaking: address(staking),
                 olympusCooler: address(cooler),
                 strategy: address(vaultStrategy),
                 debtConverterToWad: address(converterToWadDebt),
-                debtTokenMigrator: address(debtTokenMigrator),
                 minDeposit: MIN_DEPOSIT
             })
         );
@@ -105,10 +118,9 @@ contract CallistoVaultTestBase is KernelTestBase {
 
         // Init COLLAR
         vm.startPrank(admin);
-        MockStabilityPool pool = new MockStabilityPool(IERC20(address(collar)));
         psm.grantRole(psm.ADMIN_ROLE(), admin);
         psm.setLP(address(vaultStrategy));
-        psm.initCallistoStabilityPool(address(pool));
+        psmStrategy.finalizeInitialization(address(psm));
 
         vaultStrategy.initVault(address(vault));
         vm.stopPrank();
@@ -167,5 +179,13 @@ contract CallistoVaultTestBase is KernelTestBase {
 
     function _usdsToGohm(uint256 usdsAssets) internal pure returns (uint256) {
         return usdsAssets / 3; // exchange rate gohm-usds 1:3
+    }
+
+    function _depositSusds(uint256 assets, address to) internal {
+        usds.mint(to, assets);
+        vm.startPrank(to);
+        usds.approve(address(susds), assets);
+        susds.deposit(assets, to);
+        vm.stopPrank();
     }
 }

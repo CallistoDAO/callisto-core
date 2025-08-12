@@ -5,7 +5,10 @@ pragma solidity 0.8.30;
 import { Ownable } from "../../dependencies/@openzeppelin-contracts-5.3.0/access/Ownable.sol";
 import { IERC20, IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { SafeERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
+
+import { CallistoVault } from "../../src/policies/CallistoVault.sol";
 import { CallistoPSM } from "./CallistoPSM.sol";
+import { DebtTokenMigrator } from "./DebtTokenMigrator.sol";
 
 /**
  * @title Callisto Vault Strategy
@@ -23,8 +26,8 @@ contract VaultStrategy is Ownable {
     /// @notice Callisto Peg Stability Module (PSM) for COLLAR stablecoin.
     CallistoPSM public immutable PSM;
 
-    /// @dev The contract address authorized to migrate the debt token.
-    address public immutable DEBT_TOKEN_MIGRATOR;
+    /// @notice The contract address authorized to migrate the debt token.
+    address public debtTokenMigrator;
 
     // ___ STORAGE ___
 
@@ -66,6 +69,13 @@ contract VaultStrategy is Ownable {
      */
     event VaultInitialized(address vault);
 
+    /**
+     * @notice Emitted when the debt token migrator address is updated
+     * @param oldMigrator The previous migrator address
+     * @param newMigrator The new migrator address
+     */
+    event DebtTokenMigratorSet(address indexed oldMigrator, address indexed newMigrator);
+
     // ___ ERRORS ___
 
     error ZeroAddress();
@@ -79,6 +89,10 @@ contract VaultStrategy is Ownable {
     error UnexpectedAsset(address unexpected);
 
     error OnlyDebtTokenMigrator(address migrator);
+
+    error MigratorNotSet();
+
+    error MismatchedCoolerAddress();
 
     // ___ MODIFIERS ___
 
@@ -95,24 +109,21 @@ contract VaultStrategy is Ownable {
     // ___ INITIALIZATION ___
 
     /**
-     * @dev Initializes strategy with asset, yield vault, and migrator.
+     * @dev Initializes strategy with asset, yield vault.
      * @param owner The initial owner.
      * @param asset_ The initial asset (e.g., USDS, Olympus Cooler V2 debt token).
      * @param psm The Callisto PSM address.
      * @param yieldVault_ The ERC4626 yield vault (e.g., sUSDS).
-     * @param debtTokenMigrator The address authorized to migrate the asset.
      * @dev Sets infinite approval for the yield vault.
      */
-    constructor(address owner, IERC20 asset_, address psm, IERC4626 yieldVault_, address debtTokenMigrator)
-        Ownable(owner)
-    {
-        require(psm != address(0) && debtTokenMigrator != address(0), ZeroAddress());
+    constructor(address owner, IERC20 asset_, address psm, IERC4626 yieldVault_) Ownable(owner) {
+        require(psm != address(0), ZeroAddress());
         require(yieldVault_.asset() == address(asset_), UnexpectedAsset(address(asset_)));
 
         asset = asset_;
         PSM = CallistoPSM(psm);
         yieldVault = yieldVault_;
-        DEBT_TOKEN_MIGRATOR = debtTokenMigrator;
+        debtTokenMigrator = address(0);
 
         // Set the permanent allowance of `yieldVault_` over this strategy's assets.
         // slither-disable-next-line unused-return
@@ -130,6 +141,23 @@ contract VaultStrategy is Ownable {
         emit VaultInitialized(vault_);
     }
 
+    /**
+     * @notice Sets the debt token migrator address.
+     * @param newMigrator The new debt token migrator address (can be address(0) to disable migrations)
+     */
+    function setDebtTokenMigrator(address newMigrator) external onlyOwner {
+        if (newMigrator != address(0)) {
+            require(
+                address(DebtTokenMigrator(newMigrator).OLYMPUS_COOLER())
+                    == address(CallistoVault(vault).OLYMPUS_COOLER()),
+                MismatchedCoolerAddress()
+            );
+        }
+        address oldMigrator = debtTokenMigrator;
+        debtTokenMigrator = newMigrator;
+        emit DebtTokenMigratorSet(oldMigrator, newMigrator);
+    }
+
     // ___ DEPOSIT & WITHDRAWAL LOGIC ___
 
     /**
@@ -137,21 +165,14 @@ contract VaultStrategy is Ownable {
      * @param assets The amount to deposit.
      */
     function invest(uint256 assets) external onlyVault nonzeroValue(assets) {
-        // Transfer `assets` from the Callisto vault to the strategy.
-        IERC20 asset_ = asset;
-        asset_.safeTransferFrom(msg.sender, address(this), assets);
-
         // Deposit `assets` into `yieldVault` obtaining shares.
         IERC4626 yieldVault_ = yieldVault;
         // slither-disable-next-line unused-return
-        asset_.approve(address(yieldVault_), assets);
-        uint256 shares = yieldVault_.deposit(assets, address(this));
+        asset.approve(address(yieldVault_), assets);
+        uint256 shares = yieldVault_.deposit(assets, address(PSM));
 
-        // Deposit `shares` into the Callisto PSM.
-        CallistoPSM psm = PSM;
-        // slither-disable-next-line unused-return
-        yieldVault_.approve(address(psm), shares);
-        psm.addLiquidity(shares);
+        // record `shares` (sUSDS) into the Callisto PSM.
+        PSM.addLiquidity(shares);
         emit Invested(assets);
     }
 
@@ -194,7 +215,10 @@ contract VaultStrategy is Ownable {
      * @param newYieldVault The new ERC4626 yield vault address.
      */
     function migrateAsset(IERC20 newAsset, IERC4626 newYieldVault) external {
-        require(msg.sender == DEBT_TOKEN_MIGRATOR, OnlyDebtTokenMigrator(DEBT_TOKEN_MIGRATOR));
+        address migrator = debtTokenMigrator;
+        require(migrator != address(0), MigratorNotSet());
+        require(msg.sender == migrator, OnlyDebtTokenMigrator(migrator));
+        require(address(newAsset) == address(CallistoVault(vault).OLYMPUS_COOLER().treasuryBorrower().debtToken()));
 
         asset = newAsset;
         yieldVault = newYieldVault;

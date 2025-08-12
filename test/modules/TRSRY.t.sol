@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity ^0.8.22;
 
-import { MockERC20 } from "../../dependencies/solmate-6.8.0/src/test/utils/mocks/MockERC20.sol";
 import { Actions, Kernel, Keycode, Module } from "../../src/Kernel.sol";
 import { CallistoTreasury } from "../../src/modules/TRSRY/CallistoTreasury.sol";
 import { ModuleTestFixtureGenerator } from "../test-common/lib/ModuleTestFixtureGenerator.sol";
-import { Test } from "forge-std/Test.sol";
+import { Test } from "forge-std-1.9.6/Test.sol";
+import { MockERC20 } from "solmate-6.8.0/test/utils/mocks/MockERC20.sol";
 
 contract TRSRYTest is Test {
     using ModuleTestFixtureGenerator for CallistoTreasury;

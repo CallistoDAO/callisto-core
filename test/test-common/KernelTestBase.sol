@@ -3,14 +3,14 @@
 pragma solidity ^0.8.22;
 
 import { Actions, Kernel } from "../../src/Kernel.sol";
+import { CommonRoles } from "../../src/libraries/CommonRoles.sol";
 import { CallistoRoles } from "../../src/modules/ROLES/CallistoRoles.sol";
 import { CallistoTreasury } from "../../src/modules/TRSRY/CallistoTreasury.sol";
 import { RolesAdmin } from "../../src/policies/RolesAdmin.sol";
-import { CommonRoles } from "../../src/policies/common/CommonRoles.sol";
-import { CallistoVault } from "../../src/policies/vault/CallistoVault.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
 import { CommonUtilities } from "../test-common/lib/CommonUtilities.sol";
-import { Test } from "forge-std/Test.sol";
+import { CallistoVaultTester } from "../testers/CallstoVaultTester.sol";
+import { Test } from "forge-std-1.9.6/Test.sol";
 
 abstract contract KernelTestBase is Test {
     address[] accounts;
@@ -21,7 +21,7 @@ abstract contract KernelTestBase is Test {
     RolesAdmin rolesAdmin;
     CallistoTreasury treasury;
 
-    CallistoVault public vault;
+    CallistoVaultTester public vault;
     MockERC20 public ohm;
 
     function setUp() public virtual {

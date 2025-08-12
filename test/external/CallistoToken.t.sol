@@ -3,7 +3,7 @@
 pragma solidity ^0.8.24;
 
 import { CallistoToken } from "../../src/external/CallistoToken.sol";
-import { Test } from "forge-std/Test.sol";
+import { Test } from "forge-std-1.9.6/Test.sol";
 
 contract CallistoTokenTests is Test {
     address defaultAdmin;

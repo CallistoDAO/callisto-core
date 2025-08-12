@@ -1,0 +1,35 @@
+{
+  "name": "callisto-sandbox",
+  "description": "Callisto Contracts",
+  "license": "MIT",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "setup": "pnpm i && pnpm tsx setup.ts",
+    "generate-abi": "pnpm i && pnpm tsx setup.ts generate-abi",
+    "size": "forge build --sizes src/policies/CallistoVault.sol",
+    "test": "forge test",
+    "coverage": "pnpm tsx setup.ts coverage",
+    "lcov": "forge coverage --no-match-coverage='test/|script/' --ir-minimum --report lcov",
+    "lint": "pre-commit run --all-files",
+    "slither": "slither --filter-paths '(dependencies/|node_modules/|lib/)' .",
+    "snapshot": "forge s",
+    "diff": "forge s --diff",
+    "coverage:ci": "pnpm tsx setup.ts coverage-ci",
+    "prepare": "husky"
+  },
+  "author": {
+    "name": "Callisto DAO",
+    "email": "info@callisto.finance"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^24.0.0",
+    "commander": "^14.0.0",
+    "execa": "^9.6.0",
+    "fs-extra": "^11.3.0",
+    "husky": "^9.1.7",
+    "prettier": "^3.6.2",
+    "tsx": "^4.19.4"
+  }
+}

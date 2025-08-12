@@ -7,7 +7,7 @@ import { ICallistoHeart } from "../interfaces/ICallistoHeart.sol";
 import { IExecutableByHeart } from "../interfaces/IExecutableByHeart.sol";
 import { MINTRv1 } from "../modules/MINTR/MINTR.v1.sol";
 import { ROLESv1, RolesConsumer } from "../modules/ROLES/CallistoRoles.sol";
-import { ReentrancyGuard } from "solmate-6.8.0/src/utils/ReentrancyGuard.sol";
+import { ReentrancyGuard } from "solmate-6.8.0/utils/ReentrancyGuard.sol";
 
 /**
  * @title Callisto Heart
@@ -43,6 +43,9 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
     /// @notice The Callisto vault.
     IExecutableByHeart public callistoVault;
 
+    /// @notice The COLLAR burning strategy of the Callisto PSM.
+    IExecutableByHeart public psmStrategy;
+
     // ___ MODIFIERS ___
 
     modifier onlyActive() {
@@ -53,14 +56,20 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
     // ___ INITIALIZATION AND KERNEL POLICY CONFIGURATION ___
 
     /// @notice `auctionDuration_` should be less than or equal to `frequency_`.
-    constructor(Kernel kernel_, address callistoVault_, uint48 frequency_, uint48 auctionDuration_, uint256 maxReward_)
-        Policy(kernel_)
-    {
+    constructor(
+        Kernel kernel_,
+        address callistoVault_,
+        address psmStrategy_,
+        uint48 frequency_,
+        uint48 auctionDuration_,
+        uint256 maxReward_
+    ) Policy(kernel_) {
         require(address(kernel_) != address(0), Heart_InvalidParams());
         require(auctionDuration_ <= frequency_, Heart_InvalidParams());
 
         _setFrequency(frequency_);
         _setCallistoVault(callistoVault_);
+        _setPSMStrategy(psmStrategy_);
         auctionDuration = auctionDuration_;
         maxReward = maxReward_;
         emit RewardUpdated(maxReward_, auctionDuration_);
@@ -116,6 +125,9 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
 
         // Handle pending OHM deposits in the Callisto vault.
         callistoVault.execute();
+
+        // Handle COLLAR burning in the strategy of the Callisto PSM.
+        psmStrategy.execute();
 
         /* Update the timestamp of the last beat.
          * Ensure that the update `frequency` does not change, but prevent multiple beats if one is missed.
@@ -197,6 +209,11 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         _setCallistoVault(vault);
     }
 
+    /// @inheritdoc ICallistoHeart
+    function setPSMStrategy(address strategy) external onlyRole(HEART_ADMIN_ROLE) {
+        _setPSMStrategy(strategy);
+    }
+
     function _setFrequency(uint48 freq) private {
         require(freq != 0, Heart_InvalidParams());
         frequency = freq;
@@ -207,6 +224,12 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         require(vault != address(0), Heart_InvalidParams());
         callistoVault = IExecutableByHeart(vault);
         emit CallistoVaultSet(vault);
+    }
+
+    function _setPSMStrategy(address strategy) private {
+        require(strategy != address(0), Heart_InvalidParams());
+        psmStrategy = IExecutableByHeart(strategy);
+        emit PSMStrategySet(strategy);
     }
 
     function _resetBeat() private {

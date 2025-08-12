@@ -8,7 +8,7 @@ import { IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/inter
 import { SafeERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
 import { Math } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/Math.sol";
 import { IMonoCooler } from "../interfaces/IMonoCooler.sol";
-import { CallistoVault } from "../policies/vault/CallistoVault.sol";
+import { CallistoVault } from "../policies/CallistoVault.sol";
 import { CallistoPSM } from "./CallistoPSM.sol";
 import { VaultStrategy } from "./VaultStrategy.sol";
 

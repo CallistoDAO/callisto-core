@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import { MockERC20 } from "./MockERC20.sol";
 import { MockGohm } from "./MockGohm.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface IDistributor {
     function distribute() external;
@@ -11,6 +13,8 @@ interface IDistributor {
 }
 
 contract MockStaking {
+    using SafeERC20 for IERC20;
+
     struct Epoch {
         uint256 length;
         uint256 number;
@@ -61,7 +65,7 @@ contract MockStaking {
 
     /// functions
     function stake(address to_, uint256 amount_, bool rebasing_, bool claim_) external returns (uint256) {
-        OHM.transferFrom(msg.sender, address(this), amount_);
+        IERC20(address(OHM)).safeTransferFrom(msg.sender, address(this), amount_);
         amount_ = amount_ + rebase();
         if (claim_ && warmupPeriod == 0) {
             return _send(to_, amount_, rebasing_);
@@ -107,14 +111,14 @@ contract MockStaking {
         if (trigger_) bounty = rebase();
 
         if (rebasing_) {
-            sOHM.transferFrom(msg.sender, address(this), amount_);
+            IERC20(address(sOHM)).safeTransferFrom(msg.sender, address(this), amount_);
             amount = amount_ + bounty;
         } else {
             gOHM.burnFrom(msg.sender, amount_);
             amount = gOHM.balanceFrom(amount_) + bounty;
         }
 
-        OHM.transfer(to_, amount);
+        IERC20(address(OHM)).safeTransfer(to_, amount);
     }
 
     function rebase() public pure returns (uint256) {
@@ -156,7 +160,7 @@ contract MockStaking {
 
         // gonsInWarmup = gonsInWarmup.sub(info.gons);
 
-        OHM.transfer(msg.sender, info.deposit);
+        IERC20(address(OHM)).safeTransfer(msg.sender, info.deposit);
 
         return info.deposit;
     }

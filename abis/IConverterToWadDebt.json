@@ -1,0 +1,21 @@
+[
+  {
+    "type": "function",
+    "name": "toWad",
+    "inputs": [
+      {
+        "name": "debtTokens",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "pure"
+  }
+]

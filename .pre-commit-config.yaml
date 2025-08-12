@@ -1,0 +1,113 @@
+exclude: ^(node_modules/.*|lib/.*|pnpm-lock.yaml|out/.*|.vscode/.*|tms/.*)$
+#fail_fast: true
+repos:
+  #  - repo: local
+  #    hooks:
+  #      - id: slither
+  #        entry: slither
+  #        args:
+  #          - .
+  #          - --filter-paths
+  #          - (node_modules/|lib/)
+  #        pass_filenames: false
+  #        language: python
+  #        files: \.sol$
+  #        name: solidity lint https://github.com/crytic/slither .
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0 # Use the ref you want to point at
+    hooks:
+      - id: end-of-file-fixer
+        exclude: ^(.idea/.*|.gas-snapshot)$
+        name: Fix End of Files https://github.com/pre-commit/pre-commit-hooks#end-of-file-fixer .
+      - id: trailing-whitespace
+        name: Trim Trailing Whitespace https://github.com/pre-commit/pre-commit-hooks#trailing-whitespace .
+        exclude: ^(.*\.snap)$
+      - id: check-added-large-files
+        name: Check large files maxkb=3000  https://github.com/pre-commit/pre-commit-hooks#check-added-large-files .
+        args: [--maxkb=4000]
+        exclude: ^(.*package-lock\.json)$
+      - id: check-yaml
+        name: Check Yaml https://github.com/pre-commit/pre-commit-hooks#check-yaml .
+        args: [--allow-multiple-documents]
+      - id: check-case-conflict
+        name: Check for case conflicts https://github.com/pre-commit/pre-commit-hooks#check-case-conflict .
+      - id: check-executables-have-shebangs
+        name: Check that executables have shebangs  https://github.com/pre-commit/pre-commit-hooks#check-executables-have-shebangs .
+      - id: check-merge-conflict
+        name: Check for merge conflicts https://github.com/pre-commit/pre-commit-hooks#check-merge-conflict .
+      #      - id: check-symlinks
+      #      - id: check-vcs-permalinks
+      #      - id: detect-private-key
+      - id: mixed-line-ending
+        name: Mixed line ending https://github.com/pre-commit/pre-commit-hooks#mixed-line-ending .
+        args: [--fix, lf]
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: forbid-binary
+        name: Forbid binaries https://github.com/jumanjihouse/pre-commit-hooks#forbid-binary .
+        exclude: ^(.*\.ico|.*\.icns|.*\.ttf|.*\.eot|.*\.woff|.*\.woff2|.*\.png|.*\.jpg|.*\.gif|.scripts/jenkins-cli.jar|apps/landing/public/videos/.*|apps/landing/public/images-team/.*|src-tauri/books/.*\.pdf)$
+      #      - id: git-check # Configure in .gitattributes
+      #        name: Check for conflict markers and core.whitespace errors https://github.com/jumanjihouse/pre-commit-hooks#git-check .
+      - id: markdownlint # Configure in .mdlrc
+        name: Check markdown files https://github.com/jumanjihouse/pre-commit-hooks#markdownlint .
+        args: [-r, "~MD013,~MD004,~MD026,~MD033,~MD005,~MD007,~MD029"]
+      - id: require-ascii
+        name: Check file encoding https://github.com/jumanjihouse/pre-commit-hooks#require-ascii .
+        # exclude web3 because of ... char use
+        exclude: ^(.gas-snapshot|.*\.sol|.*\.md)$
+  #      - id: shellcheck
+  - repo: https://github.com/Lucas-C/pre-commit-hooks-nodejs
+    rev: v1.1.2
+    hooks:
+      #      - id: dockerfile_lint
+      - id: markdown-toc
+        args: ["--bullets", "+", "-i"]
+  - repo: local
+    hooks:
+      - id: forge-fmt
+        name: forge fmt https://book.getfoundry.sh/reference/cli/forge/fmt?highlight=forge%20format#forge-fmt .
+        description: Format solidity with forge fmt.
+        entry: forge fmt
+        language: system
+        pass_filenames: false
+      - id: prettier
+        entry: prettier
+        language: node
+        additional_dependencies:
+          [prettier@3.5.3, prettier-plugin-solidity@2.0.0, prettier-plugin-solidity-explicit-types@1.1.3]
+        name: prettier https://prettier.io/docs/en/precommit.html .
+        args: [--ignore-unknown, --write]
+      - id: solhint-common
+        name: solhint https://github.com/protofire/solhint/blob/develop/docs/rules.md .
+        entry: solhint
+        language: node
+        additional_dependencies: [solhint@5.1.0]
+        files: \.sol$
+        args: ["--formatter", "unix", "--max-warnings", "0"]
+      - id: solhint-src
+        name: solhint src/ https://github.com/protofire/solhint/blob/develop/docs/rules.md .
+        entry: solhint
+        language: node
+        additional_dependencies: [solhint@5.1.0]
+        files: \.sol$
+        exclude: ^(test/.*|script/.*)$
+        args: ["--formatter", "unix", "--config", "src/.solhint.json", "--max-warnings", "0"]
+      - id: generate-abis
+        name: generate abi for contracts
+        description: Generate abi files.
+        entry: pnpm run generate-abi
+        language: system
+        pass_filenames: false
+#      - id: forge-test
+#        name: forge tests https://book.getfoundry.sh/forge/tests .
+#        description: Forge tests.
+#        entry: forge test
+#        language: system
+#        pass_filenames: false
+#      - id: forge-snapshot
+#        name: forge snapshot https://book.getfoundry.sh/forge/gas-snapshots .
+#        description: generate gas snapshots for all your test functions.
+#        entry: sh -c "forge clean && forge snapshot"
+#        language: system
+#        pass_filenames: false

@@ -6,7 +6,7 @@ import { CallistoToken } from "../../src/external/CallistoToken.sol";
 import { CallistoMinter } from "../../src/modules/MINTR/CallistoMinter.sol";
 import { ModuleTestFixtureGenerator } from "../test-common/lib/ModuleTestFixtureGenerator.sol";
 import { UserFactory } from "../test-common/lib/UserFactory.sol";
-import { Test } from "forge-std/Test.sol";
+import { Test } from "forge-std-1.9.6/Test.sol";
 
 contract MINTRTest is Test {
     using ModuleTestFixtureGenerator for CallistoMinter;

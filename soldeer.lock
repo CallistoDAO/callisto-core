@@ -13,10 +13,11 @@ checksum = "55f341818321b3f925161a72fd0dcd62e4a0a4b66785a7a932bf2bfaf96fb9d1"
 integrity = "e9ecdc364d152157431e5df5aa041ffddbe9bb1c1ad81634b1e72df9e23814e8"
 
 [[dependencies]]
-name = "olympus-v3"
-version = "3.0.0"
-git = "https://github.com/OlympusDAO/olympus-v3.git"
-rev = "a307c4e1dbdadfb1c478fcfcdcb7fbc5e3b5746d"
+name = "solady"
+version = "0.1.19"
+url = "https://soldeer-revisions.s3.amazonaws.com/solady/0_1_19_20-05-2025_05:44:38_solady.zip"
+checksum = "80c617037dc09a51ecf036064ea38b410f5b0c8104d1d2b0cad3bd41e7823b6f"
+integrity = "cecf9761c3d69100aaf0e03c2c66edbfbb5f86c32d11b272b5a3e5c18d231ebc"
 
 [[dependencies]]
 name = "solmate"

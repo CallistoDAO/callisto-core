@@ -10,14 +10,14 @@ contract MockConverterToWadDebt {
 
     uint8 public constant DECIMALS = 18;
 
-    uint256 private immutable _conversionScalar;
+    uint256 private immutable _CONVERSION_PRECISION;
 
     constructor(uint8 tokenDecimals) {
-        _conversionScalar = 10 ** (DECIMALS - tokenDecimals);
+        _CONVERSION_PRECISION = 10 ** (DECIMALS - tokenDecimals);
     }
 
     // TODO: check formula
     function toWad(uint256 debtTokens) external view returns (uint128) {
-        return Math.mulDiv(debtTokens, _conversionScalar, 1, Math.Rounding.Ceil).toUint128();
+        return Math.mulDiv(debtTokens, _CONVERSION_PRECISION, 1, Math.Rounding.Ceil).toUint128();
     }
 }

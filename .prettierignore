@@ -1,0 +1,12 @@
+test/lib/quabi/Quabi.sol
+cache/
+coverage/
+/dependencies/
+/docs/
+/lib/
+node_modules/
+out/
+
+# Skip deployment sequences, as order is important
+scripts/deploy/savedDeployments/
+pnpm-lock.yaml

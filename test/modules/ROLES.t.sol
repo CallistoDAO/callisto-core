@@ -6,7 +6,7 @@ import { CallistoRoles } from "../../src/modules/ROLES/CallistoRoles.sol";
 import { ROLESv1 } from "../../src/modules/ROLES/ROLES.v1.sol";
 import { ModuleTestFixtureGenerator } from "../test-common/lib/ModuleTestFixtureGenerator.sol";
 import { UserFactory } from "../test-common/lib/UserFactory.sol";
-import { Test } from "forge-std/Test.sol";
+import { Test } from "forge-std-1.9.6/Test.sol";
 
 contract ROLESTest is Test {
     using ModuleTestFixtureGenerator for CallistoRoles;

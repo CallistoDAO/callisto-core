@@ -1,0 +1,1 @@
+SKIP=forge-test pnpm run lint

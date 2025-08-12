@@ -2,7 +2,8 @@
 
 pragma solidity 0.8.30;
 
-import { SafeCast } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/SafeCast.sol";
+import { IConverterToWadDebt } from "../interfaces/IConverterToWadDebt.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title ConverterToWadDebt
@@ -12,10 +13,11 @@ import { SafeCast } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils
  * decimals to wad, considering `CoolerTreasuryBorrower.convertToDebtTokenAmount`. This contract is replaced via
  * `DebtTokenMigrator.migrateDebtToken`.
  */
-contract ConverterToWadDebt {
+contract ConverterToWadDebt is IConverterToWadDebt {
     using SafeCast for uint256;
 
-    function toWad(uint256 debtTokens) external pure returns (uint128) {
+    /// @inheritdoc IConverterToWadDebt
+    function toWad(uint256 debtTokens) external pure override returns (uint128) {
         return debtTokens.toUint128();
     }
 }

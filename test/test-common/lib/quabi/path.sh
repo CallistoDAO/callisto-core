@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -euxo pipefail
 
 for FOLDER in ./out/*; do
-  for FILE in $FOLDER/*; do
-    NAME=$(basename $FILE)
-    if [ $NAME == $1 ]; then
-      cast abi-encode "result(string)" $FILE
-      break
+  # Skip if no directories match
+  [ -d "$FOLDER" ] || continue
+  for FILE in "$FOLDER"/*; do
+    # Skip if no files match
+    [ -f "$FILE" ] || continue
+    NAME=$(basename "$FILE")
+    if [ "$NAME" == "$1" ]; then
+      cast abi-encode "result(string)" "$FILE"
+      exit 0
     fi
   done
 done

@@ -2,13 +2,16 @@
 
 pragma solidity ^0.8.29;
 
+import { ERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/ERC20.sol";
+
+import { ERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/extensions/ERC4626.sol";
 import { IERC20, SafeERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
 import { SafeCast } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/SafeCast.sol";
-import { IDLGTEv1 } from "../../dependencies/olympus-v3-3.0.0/src/modules/DLGTE/IDLGTE.v1.sol";
 import { ICoolerTreasuryBorrower } from "../../src/interfaces/ICoolerTreasuryBorrower.sol";
+import { IDLGTEv1 } from "../../src/interfaces/IDLGTEv1.sol";
 import { IGOHM } from "../../src/interfaces/IGOHM.sol";
 
-contract MockMonoCooler {
+contract MockMonoCooler is ERC4626 {
     using SafeCast for *;
     using SafeERC20 for IGOHM;
     using SafeERC20 for IERC20;
@@ -31,7 +34,10 @@ contract MockMonoCooler {
 
     mapping(address account => uint128) public accountCollateral;
 
-    constructor(IGOHM gOHM, address usds, uint128 usdPriceOfGOHM, address treasuryBorrower_) {
+    constructor(IGOHM gOHM, address usds, uint128 usdPriceOfGOHM, address treasuryBorrower_)
+        ERC4626(ERC20(address(gOHM)))
+        ERC20("MockMonoCooler", "mMC")
+    {
         GOHM = gOHM;
         USDS = IERC20(usds);
         GOHM_USD_PRICE = usdPriceOfGOHM;

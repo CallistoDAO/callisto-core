@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 pragma solidity ^0.8.24;
 
-import { Vm } from "forge-std/Vm.sol";
+import { Vm } from "forge-std-1.9.6/Vm.sol";
 
 /// @notice Mock policy to allow testing gated module functions
 // import {console2} from "../../,,/dependencies/forge-std-1.9.6/src/console2.sol";
 
 library Quabi {
-    Vm internal constant vm = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+    Vm internal constant VM = Vm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
 
     function jq(string memory query, string memory path) internal returns (bytes[] memory response) {
         string[] memory inputs = new string[](3);
         inputs[0] = "sh";
         inputs[1] = "-c";
         inputs[2] = string(bytes.concat("./test/test-common/lib/quabi/jq.sh ", bytes(query), " ", bytes(path), ""));
-        bytes memory res = vm.ffi(inputs);
+        bytes memory res = VM.ffi(inputs);
         if (res.length > 0) {
             response = abi.decode(res, (bytes[]));
         }
@@ -25,7 +25,7 @@ library Quabi {
         inputs[0] = "sh";
         inputs[1] = "-c";
         inputs[2] = string(bytes.concat("./test/test-common/lib/quabi/path.sh ", bytes(contractName), ".json", ""));
-        bytes memory res = vm.ffi(inputs);
+        bytes memory res = VM.ffi(inputs);
 
         path = abi.decode(res, (string));
     }

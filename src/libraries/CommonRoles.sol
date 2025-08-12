@@ -9,9 +9,6 @@ library CommonRoles {
     /// @dev Managerial access, e.g. managing specific protocol parameters. Typically assigned to a multisig/council.
     bytes32 internal constant MANAGER = "manager";
 
-    /// @dev Allows enabling/disabling the protocol/policies in an emergency
-    bytes32 internal constant EMERGENCY = "emergency";
-
     /// @notice The `account` is missing a role.
     error Unauthorized(address account);
 }

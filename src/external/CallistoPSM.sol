@@ -7,7 +7,11 @@ import { IERC20Metadata } from "../../dependencies/@openzeppelin-contracts-5.3.0
 import { IERC20, IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { SafeERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
 import { Math } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/Math.sol";
+import { CallistoVault } from "../../src/policies/CallistoVault.sol";
 import { ICOLLAR } from "../interfaces/ICOLLAR.sol";
+import { DebtTokenMigrator } from "./DebtTokenMigrator.sol";
+import { PSMStrategy } from "./PSMStrategy.sol";
+import { VaultStrategy } from "./VaultStrategy.sol";
 
 /**
  * @title Callisto Peg Stability Module (PSM) for COLLAR
@@ -20,13 +24,10 @@ import { ICOLLAR } from "../interfaces/ICOLLAR.sol";
 contract CallistoPSM is AccessControl {
     using SafeERC20 for IERC20;
     using SafeERC20 for IERC4626;
-    using SafeERC20 for ICOLLAR;
 
     // ___ CONSTANTS & IMMUTABLES
 
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-
-    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
     bytes32 public constant FEE_EXEMPT_ROLE = keccak256("FEE_EXEMPT_ROLE");
 
@@ -35,9 +36,10 @@ contract CallistoPSM is AccessControl {
     uint256 private constant _PAUSE_VALUE = type(uint256).max;
 
     /// @notice The Callisto stablecoin.
-    ICOLLAR public immutable COLLAR;
+    IERC20 public immutable COLLAR;
 
-    address public immutable DEBT_TOKEN_MIGRATOR;
+    /// @notice The contract address authorized to migrate the debt token.
+    address public debtTokenMigrator;
 
     // ___ STORAGE
 
@@ -69,9 +71,8 @@ contract CallistoPSM is AccessControl {
     /// @notice Total yield vault shares (initially sUSDS) supplied by the liquidity provider.
     uint256 public suppliedByLP;
 
-    IERC4626 public callistoStabilityPool;
-
-    uint256 public depositedToStabilityPool;
+    /// @notice The COLLAR burning strategy of the PSM.
+    PSMStrategy public psmStrategy;
 
     // ___ EVENTS
 
@@ -79,19 +80,15 @@ contract CallistoPSM is AccessControl {
 
     event LiquidityRemoved(uint256 shares, uint256 newLPBalance);
 
-    event COLLARBought(address indexed account, uint256 assetsIn, uint256 collarOut, uint256 fee);
+    event COLLARBought(address indexed account, uint256 collarOut, uint256 assetsIn, uint256 fee);
 
     event COLLARSold(address indexed account, uint256 collarIn, uint256 assetsOut, uint256 fee);
-
-    event COLLARBurned(uint256 amount);
 
     event FeeInSet(uint256 value);
 
     event FeeOutSet(uint256 value);
 
     event LPSet(address lp);
-
-    event CallistoStabilityPoolInitialized(address pool);
 
     event AssetMigrated(
         address indexed newAsset,
@@ -100,6 +97,13 @@ contract CallistoPSM is AccessControl {
         uint256 assets,
         uint256 suppliedByLPConverted
     );
+
+    /**
+     * @notice Emitted when the debt token migrator address is updated
+     * @param oldMigrator The previous migrator address
+     * @param newMigrator The new migrator address
+     */
+    event DebtTokenMigratorSet(address indexed oldMigrator, address indexed newMigrator);
 
     // ___ ERRORS
 
@@ -119,6 +123,10 @@ contract CallistoPSM is AccessControl {
 
     error OnlyDebtTokenMigrator(address migrator);
 
+    error MigratorNotSet();
+
+    error MismatchedCoolerAddress();
+
     // ___ MODIFIERS
 
     modifier onlyLP() {
@@ -134,32 +142,25 @@ contract CallistoPSM is AccessControl {
     // ___ INITIALIZATION
 
     /**
-     * @dev Use `setLiquidityProvider` and `initCallistoStabilityPool` after deployment. Optionally set fees with
-     * `setFee`.
+     * @dev Use `setLiquidityProvider` after deployment. Optionally set fees with `setFee`.
      */
-    constructor(address defaultAdmin, address asset_, address collar, address yieldVault_, address debtTokenMigrator) {
+    constructor(address defaultAdmin, address asset_, address collar, address yieldVault_, address psmStrategy_) {
         require(
             defaultAdmin != address(0) && asset_ != address(0) && collar != address(0) && yieldVault_ != address(0)
-                && debtTokenMigrator != address(0),
+                && psmStrategy_ != address(0),
             InvalidParameter()
         );
 
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
 
-        COLLAR = ICOLLAR(collar);
+        COLLAR = IERC20(collar);
         asset = IERC20(asset_);
         to18DecimalsMultiplier = 10 ** (18 - IERC20Metadata(asset_).decimals());
         yieldVault = IERC4626(yieldVault_);
+        psmStrategy = PSMStrategy(psmStrategy_);
         emit FeeInSet(0);
         emit FeeOutSet(0);
-        DEBT_TOKEN_MIGRATOR = debtTokenMigrator;
-    }
-
-    function initCallistoStabilityPool(address pool) external onlyRole(ADMIN_ROLE) {
-        require(address(callistoStabilityPool) == address(0), AlreadyInitialized());
-        require(pool != address(0), InvalidParameter());
-        callistoStabilityPool = IERC4626(pool);
-        emit CallistoStabilityPoolInitialized(pool);
+        debtTokenMigrator = address(0);
     }
 
     // ___ SWAP BETWEEN ASSETS & COLLAR
@@ -228,13 +229,11 @@ contract CallistoPSM is AccessControl {
 
         // Mint COLLAR to `to`.
         // TODO: check whether COLLAR reverts if `to` is the zero address.
-        COLLAR.mintFromWhitelistedContract(to, collarOut);
+        ICOLLAR(address(COLLAR)).mintByPSM(to, collarOut);
 
         emit COLLARBought(to, collarOut, assets, fee);
         return collarOut;
     }
-
-    // TODO: clarify when COLLAR should be withdrawn from the CDP after cOHM have been exchanged for COLLAR in the CDP.
 
     function _buyAssets(
         address to,
@@ -244,19 +243,10 @@ contract CallistoPSM is AccessControl {
         // Calculate the COLLAR amount to transfer from the caller.
         (collarIn, fee) = _calcCOLLARIn(assets, fee);
 
-        // Transfer `collarIn` from the caller.
-        ICOLLAR collar = COLLAR;
-        collar.safeTransferFrom(msg.sender, address(this), collarIn);
-        // Transfer `collarIn` to `stabilityPool`.
-        IERC4626 stabilityPool = callistoStabilityPool;
-        // slither-disable-next-line unused-return
-        collar.approve(address(stabilityPool), collarIn);
-        // slither-disable-next-line unused-return
-        stabilityPool.deposit(collarIn, address(this));
-        depositedToStabilityPool += collarIn;
-        // TODO: clarify whether to deposit an accumulated value through an external function.
-        // TODO: clarify whether to track the total value deposited into the CDP.
-        // TODO: handle `stabilityPool`'s shares.
+        PSMStrategy strategy = psmStrategy;
+        // Instead of `approve` to reduce gas consumption.
+        COLLAR.safeTransferFrom(msg.sender, address(strategy), collarIn);
+        strategy.deposit(collarIn);
 
         // Withdraw `assets` and transfer to `to`.
         // slither-disable-next-line unused-return
@@ -292,7 +282,6 @@ contract CallistoPSM is AccessControl {
     /// @notice Supplies `yieldVault` shares as liquidity (LP only).
     function addLiquidity(uint256 shares) external onlyLP {
         suppliedByLP += shares;
-        yieldVault.safeTransferFrom(msg.sender, address(this), shares);
         emit LiquidityAdded(shares, suppliedByLP);
     }
 
@@ -315,20 +304,7 @@ contract CallistoPSM is AccessControl {
      * in some cases.
      */
 
-    // ___ ADMINISTRATIVE FUNCTIONS
-
-    // TODO: update based on inflation decision.
-    /// @notice Burns up to `amount` of COLLAR accumulated from asset purchases.
-    function burnCOLLAR(uint256 amount) external {
-        require(hasRole(KEEPER_ROLE, msg.sender) || hasRole(ADMIN_ROLE, msg.sender), AccessControlBadConfirmation());
-        if (amount != 0) {
-            ICOLLAR collar = COLLAR;
-            uint256 balance = collar.balanceOf(address(this));
-            if (amount > balance) amount = balance;
-            collar.burnFromWhitelistedContract(amount);
-            emit COLLARBurned(amount);
-        }
-    }
+    // ___ ADMINISTRATIVE FUNCTIONS ___
 
     /// @notice Adds or removes fee exemption for an account.
     function setFeeExempt(address account, bool add) external onlyRole(ADMIN_ROLE) {
@@ -353,19 +329,35 @@ contract CallistoPSM is AccessControl {
 
     /// @notice Sets the liquidity provider address (admin only).
     function setLP(address lp) external onlyRole(ADMIN_ROLE) {
+        require(liquidityProvider == address(0), AlreadyInitialized());
         require(lp != address(0), InvalidParameter());
         liquidityProvider = lp;
         emit LPSet(lp);
     }
 
+    /// @notice Sets the debt token migrator address (admin only).
+    /// @param newMigrator The new debt token migrator address (can be address(0) to disable migrations)
+    function setDebtTokenMigrator(address newMigrator) external onlyRole(ADMIN_ROLE) {
+        if (newMigrator != address(0)) {
+            require(
+                address(DebtTokenMigrator(newMigrator).OLYMPUS_COOLER())
+                    == address(CallistoVault(VaultStrategy(liquidityProvider).vault()).OLYMPUS_COOLER()),
+                MismatchedCoolerAddress()
+            );
+        }
+        address oldMigrator = debtTokenMigrator;
+        debtTokenMigrator = newMigrator;
+        emit DebtTokenMigratorSet(oldMigrator, newMigrator);
+    }
+
     /// @notice Transfers unexpected tokens (not managed by PSM) to a recipient (callable by admin only).
     function transferUnexpectedTokens(address token, address to, uint256 value) external onlyRole(ADMIN_ROLE) {
-        if (token != address(yieldVault) && token != address(callistoStabilityPool) && token != address(COLLAR)) {
+        if (token != address(yieldVault) && token != address(COLLAR)) {
             IERC20(token).safeTransfer(to, value);
         }
     }
 
-    // ___ ASSET MIGRATION LOGIC
+    // ___ ASSET MIGRATION LOGIC ___
 
     /**
      * @notice Migrates to a `newAsset` and `yieldVault`. Only callable by the debt token migrator.
@@ -383,7 +375,16 @@ contract CallistoPSM is AccessControl {
         uint256 assets,
         uint256 suppliedByLPConverted
     ) external {
-        require(msg.sender == DEBT_TOKEN_MIGRATOR, OnlyDebtTokenMigrator(DEBT_TOKEN_MIGRATOR));
+        address migrator = debtTokenMigrator;
+        require(migrator != address(0), MigratorNotSet());
+        require(msg.sender == migrator, OnlyDebtTokenMigrator(migrator));
+        require(
+            newAsset
+                == address(
+                    CallistoVault(VaultStrategy(liquidityProvider).vault()).OLYMPUS_COOLER().treasuryBorrower().debtToken()
+                )
+        );
+
         IERC20 asset_ = asset;
         IERC4626 newVault = IERC4626(newYieldVault);
         require(newAsset != address(asset_) && newVault.asset() == newAsset, InvalidParameter());
@@ -396,5 +397,13 @@ contract CallistoPSM is AccessControl {
         yieldVault = newVault;
         suppliedByLP = suppliedByLPConverted;
         emit AssetMigrated(newAsset, newYieldVault, receiver, assets, suppliedByLPConverted);
+    }
+
+    // ___ PSM STRATEGY MIGRATION ___
+
+    // TODO: ! correct before deploying to the main network.
+
+    function testSetPSMStrategy(PSMStrategy strategy) external {
+        psmStrategy = strategy;
     }
 }

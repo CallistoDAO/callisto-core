@@ -1,0 +1,54 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  run-ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      # with:
+      #   submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 10
+
+      - name: Install Node dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install Foundry dependencies
+        run: forge soldeer install
+
+      - uses: pre-commit/action@v3.0.1
+
+      - name: Forge tests
+        run: forge test --nmc "CallistoVaultTenderlyEthereumTests|OlympusBehaviorResearchTenderlyEthereumTests"
+      # FYI: currently version 1.14
+      - name: Setup lcov
+        uses: hrishikesh-kadam/setup-lcov@v1
+
+      - name: Run Code Coverage
+        run: pnpm run coverage:ci
+
+      # This action runs genhtml (which gives an error), but does not support providing arguments to ignore the error
+      # - name: Report Code Coverage
+      #   uses: zgosalvez/github-actions-report-lcov@v4
+      #   with:
+      #     coverage-files: lcov.info
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}
+      #     update-comment: true

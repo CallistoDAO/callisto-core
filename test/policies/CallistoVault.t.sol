@@ -1,122 +1,309 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.29;
+pragma solidity ^0.8.30;
 
-import { IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { ConverterToWadDebt } from "../../src/external/ConverterToWadDebt.sol";
-import { CommonRoles } from "../../src/policies/common/CommonRoles.sol";
-import { CallistoOHMVaultBase, CallistoVaultLogic, SafeCast } from "../../src/policies/vault/CallistoVaultLogic.sol";
+import { CommonRoles } from "../../src/libraries/CommonRoles.sol";
+
+import { MockCoolerTreasuryBorrower } from "../mocks/MockCoolerTreasuryBorrower.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
 import { IDLGTEv1, MockMonoCooler } from "../mocks/MockMonoCooler.sol";
 import { MockSwapper } from "../mocks/MockSwapper.sol";
 import { CallistoVaultTestBase } from "../test-common/CallistoVaultTestBase.sol";
-import { CallistoVaultHelper } from "./CallistoVaultHelper.sol";
+import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
+import { IERC20Errors } from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
+
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
+import { ICallistoVault } from "src/interfaces/ICallistoVault.sol";
+import { CallistoConstants } from "src/libraries/CallistoConstants.sol";
 
 contract CallistoVaultRestrictedFuncTests is CallistoVaultTestBase {
     using SafeCast for *;
 
     function test_callistoVault_setMinDeposit() external {
-        uint256 minDeposit = 1e3;
+        uint256 minDeposit = CallistoConstants.MIN_OHM_DEPOSIT_BOUND;
+        uint256 tooSmallDeposit = CallistoConstants.MIN_OHM_DEPOSIT_BOUND - 1;
+
+        // Test unauthorized access
         vm.expectRevert();
         vault.setMinDeposit(minDeposit);
 
+        // Test value below minimum bound
+        err = abi.encodeWithSelector(
+            ICallistoVault.AmountLessThanMinDeposit.selector, tooSmallDeposit, CallistoConstants.MIN_OHM_DEPOSIT_BOUND
+        );
         vm.prank(admin);
-        vm.expectRevert(CallistoVaultLogic.ZeroValue.selector);
-        vault.setMinDeposit(0);
+        vm.expectRevert(err);
+        vault.setMinDeposit(tooSmallDeposit);
 
+        // Test valid minimum deposit
         vm.prank(admin);
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.MinDepositSet(minDeposit);
+        emit ICallistoVault.MinDepositSet(minDeposit);
         vault.setMinDeposit(minDeposit);
         assertEq(vault.minDeposit(), minDeposit);
     }
 
-    function test_callistoVault_setOHMExchangeMode() external {
-        assertEq(abi.encode(vault.ohmExchangeMode()), abi.encode(CallistoVaultLogic.OHMExchangeMode.OlympusStaking));
+    function test_callistoVault_setOHMToGOHMMode() external {
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+        assertEq(abi.encode(vault.ohmToGOHMMode()), abi.encode(ICallistoVault.OHMToGOHMMode.ZeroWarmup));
         // 1. revert not permission
         vm.expectRevert();
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.Swap);
+        vault.setSwapMode(address(swapper));
 
         // 2. revert same mode
         vm.prank(admin);
-        vm.expectRevert(CallistoVaultLogic.FailureToSetExchangeMode.selector);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.OlympusStaking);
+        vm.expectRevert(ICallistoVault.OHMToGOHMModeUnchanged.selector);
+        vault.setZeroWarmupMode();
 
         // 3. revert warmupPeriod = 0
         vm.prank(admin);
-        vm.expectRevert(CallistoVaultLogic.FailureToSetExchangeMode.selector);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.Swap);
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.InvalidWarmupPeriod.selector, 0));
+        vault.setSwapMode(address(swapper));
 
         // 4. warmupPeriod > 0
         staking.setWarmupPeriod(1);
         vm.prank(admin);
 
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.OHMExchangeModeSet(CallistoVaultLogic.OHMExchangeMode.Swap);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.Swap);
+        emit ICallistoVault.OHMExchangeModeSet(ICallistoVault.OHMToGOHMMode.Swap, address(swapper));
+        vault.setSwapMode(address(swapper));
 
-        assertEq(abi.encode(vault.ohmExchangeMode()), abi.encode(CallistoVaultLogic.OHMExchangeMode.Swap));
+        assertEq(abi.encode(vault.ohmToGOHMMode()), abi.encode(ICallistoVault.OHMToGOHMMode.Swap));
 
-        // 5. return  OlympusStaking
+        // 5. return  ZeroWarmup
         staking.setWarmupPeriod(0);
         vm.prank(admin);
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.OHMExchangeModeSet(CallistoVaultLogic.OHMExchangeMode.OlympusStaking);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.OlympusStaking);
+        emit ICallistoVault.OHMExchangeModeSet(ICallistoVault.OHMToGOHMMode.ZeroWarmup, address(0));
+        vault.setZeroWarmupMode();
 
-        assertEq(abi.encode(vault.ohmExchangeMode()), abi.encode(CallistoVaultLogic.OHMExchangeMode.OlympusStaking));
+        assertEq(abi.encode(vault.ohmToGOHMMode()), abi.encode(ICallistoVault.OHMToGOHMMode.ZeroWarmup));
+    }
+
+    function test_callistoVault_setZeroWarmupMode_pendingWarmupStakingReverts() external {
+        uint256 assets = vault.minDeposit();
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        // Set warmup period and switch to ActiveWarmup mode
+        staking.setWarmupPeriod(1);
+        vm.prank(admin);
+        vault.setActiveWarmupMode();
+
+        // Process deposits to create pending warmup staking
+        vm.prank(multisig);
+        vault.processPendingDeposits(assets, new bytes[](0));
+
+        // Verify pending warmup staking exists
+        assertEq(vault.pendingOHMWarmupStaking(), assets);
+
+        // Attempt to switch to ZeroWarmup mode should revert due to pending warmup staking
+        staking.setWarmupPeriod(0);
+        vm.prank(admin);
+        vm.expectRevert(ICallistoVault.PendingWarmupStakingExists.selector);
+        vault.setZeroWarmupMode();
+    }
+
+    function test_callistoVault_setSwapMode_pendingWarmupStakingReverts() external {
+        uint256 assets = vault.minDeposit();
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+
+        // Set warmup period and switch to ActiveWarmup mode
+        staking.setWarmupPeriod(1);
+        vm.prank(admin);
+        vault.setActiveWarmupMode();
+
+        // Process deposits to create pending warmup staking
+        vm.prank(multisig);
+        vault.processPendingDeposits(assets, new bytes[](0));
+
+        // Verify pending warmup staking exists
+        assertEq(vault.pendingOHMWarmupStaking(), assets);
+
+        // Attempt to switch to Swap mode should revert due to pending warmup staking
+        vm.prank(admin);
+        vm.expectRevert(ICallistoVault.PendingWarmupStakingExists.selector);
+        vault.setSwapMode(address(swapper));
+    }
+
+    function test_callistoVault_setZeroWarmupMode_successAfterCancelingStake() external {
+        uint256 assets = vault.minDeposit();
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        // Set warmup period and switch to ActiveWarmup mode
+        staking.setWarmupPeriod(1);
+        vm.prank(admin);
+        vault.setActiveWarmupMode();
+
+        // Process deposits to create pending warmup staking
+        vm.prank(multisig);
+        vault.processPendingDeposits(assets, new bytes[](0));
+
+        // Verify pending warmup staking exists
+        assertEq(vault.pendingOHMWarmupStaking(), assets);
+
+        // Cancel the stake to clear pending warmup staking
+        vm.prank(admin);
+        vault.cancelOHMStake();
+
+        // Verify pending warmup staking is cleared
+        assertEq(vault.pendingOHMWarmupStaking(), 0);
+
+        // Now switching to ZeroWarmup mode should succeed
+        staking.setWarmupPeriod(0);
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit ICallistoVault.OHMExchangeModeSet(ICallistoVault.OHMToGOHMMode.ZeroWarmup, address(0));
+        vault.setZeroWarmupMode();
+
+        assertEq(abi.encode(vault.ohmToGOHMMode()), abi.encode(ICallistoVault.OHMToGOHMMode.ZeroWarmup));
+    }
+
+    function test_callistoVault_setSwapMode_successAfterCancelingStake() external {
+        uint256 assets = vault.minDeposit();
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+
+        // Set warmup period and switch to ActiveWarmup mode
+        staking.setWarmupPeriod(1);
+        vm.prank(admin);
+        vault.setActiveWarmupMode();
+
+        // Process deposits to create pending warmup staking
+        vm.prank(multisig);
+        vault.processPendingDeposits(assets, new bytes[](0));
+
+        // Verify pending warmup staking exists
+        assertEq(vault.pendingOHMWarmupStaking(), assets);
+
+        // Cancel the stake to clear pending warmup staking
+        vm.prank(admin);
+        vault.cancelOHMStake();
+
+        // Verify pending warmup staking is cleared
+        assertEq(vault.pendingOHMWarmupStaking(), 0);
+
+        // Now switching to Swap mode should succeed
+        vm.prank(admin);
+        vm.expectEmit(true, true, true, true, address(vault));
+        emit ICallistoVault.OHMExchangeModeSet(ICallistoVault.OHMToGOHMMode.Swap, address(swapper));
+        vault.setSwapMode(address(swapper));
+
+        assertEq(abi.encode(vault.ohmToGOHMMode()), abi.encode(ICallistoVault.OHMToGOHMMode.Swap));
+    }
+
+    function test_callistoVault_setSwapMode_zeroWarmupPeriodNotAllowed() external {
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+
+        // Ensure warmup period is 0 (default state)
+        assertEq(staking.warmupPeriod(), 0);
+
+        // Attempting to switch to Swap mode with zero warmup period should revert
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.InvalidWarmupPeriod.selector, 0));
+        vault.setSwapMode(address(swapper));
+    }
+
+    function test_callistoVault_setSwapMode_duplicateSettingsReverts() external {
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+
+        // First, set up the conditions to allow Swap mode
+        staking.setWarmupPeriod(1);
+        vm.prank(admin);
+        vault.setSwapMode(address(swapper));
+
+        // Verify mode is set
+        assertEq(abi.encode(vault.ohmToGOHMMode()), abi.encode(ICallistoVault.OHMToGOHMMode.Swap));
+        assertEq(address(vault.ohmSwapper()), address(swapper));
+
+        // Now try to set the same mode with the same swapper - should revert
+        vm.prank(admin);
+        vm.expectRevert(ICallistoVault.OHMToGOHMModeUnchanged.selector);
+        vault.setSwapMode(address(swapper));
+    }
+
+    function test_callistoVault_invalidActiveWarmup_bothScenarios() external {
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+
+        // Test 1: Zero warmup period prevents Swap mode (requires non-zero)
+        assertEq(staking.warmupPeriod(), 0);
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.InvalidWarmupPeriod.selector, 0));
+        vault.setSwapMode(address(swapper));
+
+        // Test 2: Non-zero warmup period prevents ZeroWarmup mode (requires zero)
+        // First set warmup period and switch to ActiveWarmup mode
+        staking.setWarmupPeriod(2);
+        vm.prank(admin);
+        vault.setActiveWarmupMode();
+
+        // Now try to switch back to ZeroWarmup mode - should fail due to non-zero warmup period
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.InvalidWarmupPeriod.selector, 2));
+        vault.setZeroWarmupMode();
     }
 
     function test_callistoVault_pauses() external {
         vm.expectRevert();
-        vault.setPause(true, true);
+        vault.setDepositsPause(true);
 
         vm.startPrank(admin);
         // 1. deposit paused
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.DepositPaused();
-        vault.setPause(true, true);
+        emit ICallistoVault.DepositPauseStatusChanged(true);
+        vault.setDepositsPause(true);
         assertEq(vault.depositPaused(), true);
         assertEq(vault.withdrawalPaused(), false);
 
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
-        vault.setPause(true, true);
+        vm.expectRevert(ICallistoVault.PauseStatusUnchanged.selector);
+        vault.setDepositsPause(true);
 
         // 2. deposit unpaused
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.DepositUnpaused();
-        vault.setPause(true, false);
+        emit ICallistoVault.DepositPauseStatusChanged(false);
+        vault.setDepositsPause(false);
         assertEq(vault.depositPaused(), false);
         assertEq(vault.withdrawalPaused(), false);
 
-        vm.expectRevert(CallistoVaultLogic.ExpectedPause.selector);
-        vault.setPause(true, false);
+        vm.expectRevert(ICallistoVault.PauseStatusUnchanged.selector);
+        vault.setDepositsPause(false);
 
         // 3. withdraw paused
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.WithdrawalPaused();
-        vault.setPause(false, true);
+        emit ICallistoVault.WithdrawalPauseStatusChanged(true);
+        vault.setWithdrawalsPause(true);
         assertEq(vault.depositPaused(), false);
         assertEq(vault.withdrawalPaused(), true);
 
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
-        vault.setPause(false, true);
+        vm.expectRevert(ICallistoVault.PauseStatusUnchanged.selector);
+        vault.setWithdrawalsPause(true);
 
         // 4. withdraw unpaused
         vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.WithdrawalUnpaused();
-        vault.setPause(false, false);
+        emit ICallistoVault.WithdrawalPauseStatusChanged(false);
+        vault.setWithdrawalsPause(false);
         assertEq(vault.depositPaused(), false);
         assertEq(vault.withdrawalPaused(), false);
 
-        vm.expectRevert(CallistoVaultLogic.ExpectedPause.selector);
-        vault.setPause(false, false);
+        vm.expectRevert(ICallistoVault.PauseStatusUnchanged.selector);
+        vault.setWithdrawalsPause(false);
         vm.stopPrank();
     }
 
     function test_callistoVault_transferUnexpectedTokens(uint256 assets, uint256 unexpectedAssets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        unexpectedAssets = bound(unexpectedAssets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
+        unexpectedAssets = bound(unexpectedAssets, vault.minDeposit(), MAX_DEPOSIT);
         ohm.mint(user, assets);
         address receiver = user2;
         _depositToVault(user, assets);
@@ -142,6 +329,159 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestBase {
         assertEq(usds.balanceOf(address(receiver)), unexpectedAssets);
     }
 
+    function test_callistoVault_sweepTokens_accessControl() external {
+        address receiver = user2;
+        uint256 amount = 1000e9;
+
+        // Mint some tokens to the vault
+        usds.mint(address(vault), amount);
+
+        // Test unauthorized access - should revert
+        vm.expectRevert(abi.encodeWithSelector(CommonRoles.Unauthorized.selector, address(this)));
+        vault.sweepTokens(address(usds), receiver, amount);
+
+        // Test with user (no admin/manager role) - should revert
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(CommonRoles.Unauthorized.selector, user));
+        vault.sweepTokens(address(usds), receiver, amount);
+
+        // Test with admin - should work
+        vm.prank(admin);
+        vault.sweepTokens(address(usds), receiver, amount);
+        assertEq(usds.balanceOf(receiver), amount);
+    }
+
+    function test_callistoVault_sweepTokens_zeroAmount() external {
+        address receiver = user2;
+
+        // Mint some tokens to the vault
+        usds.mint(address(vault), 1000e9);
+
+        // Test sweeping zero amount - should not transfer anything
+        uint256 vaultBalanceBefore = usds.balanceOf(address(vault));
+        uint256 receiverBalanceBefore = usds.balanceOf(receiver);
+
+        vm.prank(admin);
+        vault.sweepTokens(address(usds), receiver, 0);
+
+        // Balances should remain unchanged
+        assertEq(usds.balanceOf(address(vault)), vaultBalanceBefore);
+        assertEq(usds.balanceOf(receiver), receiverBalanceBefore);
+    }
+
+    function test_callistoVault_sweepTokens_noBalance() external {
+        address receiver = user2;
+        uint256 amount = 1000e9;
+
+        // Ensure vault has no USDS balance
+        assertEq(usds.balanceOf(address(vault)), 0);
+
+        // Attempting to sweep should fail (transfer would fail with insufficient balance)
+        vm.prank(admin);
+        vm.expectRevert();
+        vault.sweepTokens(address(usds), receiver, amount);
+    }
+
+    function test_callistoVault_sweepTokens_excessiveAmount_OHM() external {
+        uint256 assets = 1000e9;
+        uint256 unexpectedAssets = 500e9;
+        address receiver = user2;
+
+        // Deposit to vault first
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        // Add unexpected OHM tokens
+        ohm.mint(address(vault), unexpectedAssets);
+
+        uint256 totalVaultOHM = assets + unexpectedAssets;
+        uint256 availableForSweep = totalVaultOHM - vault.pendingOHMDeposits();
+
+        // Try to sweep more than available (should only sweep available amount)
+        uint256 requestedAmount = availableForSweep + 100e9;
+
+        vm.prank(admin);
+        vault.sweepTokens(address(ohm), receiver, requestedAmount);
+
+        // Should only transfer the available amount
+        assertEq(ohm.balanceOf(receiver), availableForSweep);
+        assertEq(ohm.balanceOf(address(vault)), vault.pendingOHMDeposits());
+    }
+
+    function test_callistoVault_sweepTokens_partialSweep_OHM() external {
+        uint256 assets = 1000e9;
+        uint256 unexpectedAssets = 500e9;
+        uint256 partialAmount = 200e9;
+        address receiver = user2;
+
+        // Deposit to vault first
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        // Add unexpected OHM tokens
+        ohm.mint(address(vault), unexpectedAssets);
+
+        uint256 vaultBalanceBefore = ohm.balanceOf(address(vault));
+
+        // Sweep partial amount
+        vm.prank(admin);
+        vault.sweepTokens(address(ohm), receiver, partialAmount);
+
+        // Check balances
+        assertEq(ohm.balanceOf(receiver), partialAmount);
+        assertEq(ohm.balanceOf(address(vault)), vaultBalanceBefore - partialAmount);
+        assertEq(ohm.balanceOf(address(vault)), vault.pendingOHMDeposits() + (unexpectedAssets - partialAmount));
+    }
+
+    function test_callistoVault_sweepTokens_multipleDifferentTokens() external {
+        uint256 amount1 = 1000e9;
+        uint256 amount2 = 2000e18;
+        address receiver = user2;
+
+        // Create another mock token
+        MockERC20 token2 = new MockERC20("Token2", "TK2", 18);
+
+        // Mint tokens to vault
+        usds.mint(address(vault), amount1);
+        token2.mint(address(vault), amount2);
+
+        // Sweep first token
+        vm.prank(admin);
+        vault.sweepTokens(address(usds), receiver, amount1);
+
+        // Sweep second token
+        vm.prank(admin);
+        vault.sweepTokens(address(token2), receiver, amount2);
+
+        // Check balances
+        assertEq(usds.balanceOf(receiver), amount1);
+        assertEq(token2.balanceOf(receiver), amount2);
+        assertEq(usds.balanceOf(address(vault)), 0);
+        assertEq(token2.balanceOf(address(vault)), 0);
+    }
+
+    function test_callistoVault_sweepTokens_differentReceivers() external {
+        uint256 amount = 1000e9;
+        address receiver1 = user;
+        address receiver2 = user2;
+
+        // Mint tokens to vault
+        usds.mint(address(vault), amount * 2);
+
+        // Sweep to first receiver
+        vm.prank(admin);
+        vault.sweepTokens(address(usds), receiver1, amount);
+
+        // Sweep to second receiver
+        vm.prank(admin);
+        vault.sweepTokens(address(usds), receiver2, amount);
+
+        // Check balances
+        assertEq(usds.balanceOf(receiver1), amount);
+        assertEq(usds.balanceOf(receiver2), amount);
+        assertEq(usds.balanceOf(address(vault)), 0);
+    }
+
     function test_callistoVault_applyDelegations() external {
         vm.expectRevert(abi.encodeWithSelector(CommonRoles.Unauthorized.selector, address(this)));
         vault.applyDelegations(new IDLGTEv1.DelegationRequest[](0));
@@ -160,31 +500,87 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestBase {
         assertEq(v3, 789);
     }
 
-    function test_callistoVault_migrateDebtToken(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+    function test_callistoVault_migrateDebtToken_simple() external {
+        uint256 assets = vault.minDeposit();
         ohm.mint(user, assets);
         _depositToVault(user, assets);
 
         MockERC20 newToken = new MockERC20("New Debt Token", "NDT", 9);
         ConverterToWadDebt newConverterToWadDebt = new ConverterToWadDebt();
 
+        // Change the debt token in the cooler to match what we're migrating to
+        MockCoolerTreasuryBorrower newCoolerTreasuryBorrower = new MockCoolerTreasuryBorrower(address(newToken));
+        cooler.setNewUsdsToken(address(newToken));
+        cooler.setNewTreasuryBorrower(address(newCoolerTreasuryBorrower));
+
         assertEq(address(vault.debtToken()), address(usds));
         assertEq(address(vault.debtConverterToWad()), address(converterToWadDebt));
 
+        // First test revert when migrator not set
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.OnlyDebtTokenMigrator.selector, address(0)));
+        vault.migrateDebtToken(address(newToken), address(newConverterToWadDebt));
+
+        // Set the migrator
+        vm.prank(admin);
+        vault.setDebtTokenMigrator(address(debtTokenMigrator));
+
         // check revert when not DebtTokenMigrator
         vm.expectRevert(
-            abi.encodeWithSelector(CallistoVaultLogic.OnlyDebtTokenMigrator.selector, address(debtTokenMigrator))
+            abi.encodeWithSelector(ICallistoVault.OnlyDebtTokenMigrator.selector, address(debtTokenMigrator))
         );
         vault.migrateDebtToken(address(newToken), address(newConverterToWadDebt));
 
         // chec success when DebtTokenMigrator
         vm.prank(address(debtTokenMigrator));
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.DebtTokenMigrated(address(newToken));
         vault.migrateDebtToken(address(newToken), address(newConverterToWadDebt));
 
         assertEq(address(vault.debtToken()), address(newToken));
         assertEq(address(vault.debtConverterToWad()), address(newConverterToWadDebt));
+        // Check that old debt token approval to strategy was set to 0
+        assertEq(usds.allowance(address(vault), address(vaultStrategy)), 0);
+        // Check that new debt token approval to strategy is set to max
+        assertEq(newToken.allowance(address(vault), address(vaultStrategy)), type(uint256).max);
+    }
+
+    function test_callistoVault_migrateDebtToken(uint256 assets) external {
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
+        ohm.mint(user, assets);
+        _depositToVault(user, assets);
+
+        MockERC20 newToken = new MockERC20("New Debt Token", "NDT", 9);
+        ConverterToWadDebt newConverterToWadDebt = new ConverterToWadDebt();
+
+        // Change the debt token in the cooler to match what we're migrating to
+        MockCoolerTreasuryBorrower newCoolerTreasuryBorrower = new MockCoolerTreasuryBorrower(address(newToken));
+        cooler.setNewUsdsToken(address(newToken));
+        cooler.setNewTreasuryBorrower(address(newCoolerTreasuryBorrower));
+
+        assertEq(address(vault.debtToken()), address(usds));
+        assertEq(address(vault.debtConverterToWad()), address(converterToWadDebt));
+
+        // First test revert when migrator not set
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.OnlyDebtTokenMigrator.selector, address(0)));
+        vault.migrateDebtToken(address(newToken), address(newConverterToWadDebt));
+
+        // Set the migrator
+        vm.prank(admin);
+        vault.setDebtTokenMigrator(address(debtTokenMigrator));
+
+        // check revert when not DebtTokenMigrator
+        vm.expectRevert(
+            abi.encodeWithSelector(ICallistoVault.OnlyDebtTokenMigrator.selector, address(debtTokenMigrator))
+        );
+        vault.migrateDebtToken(address(newToken), address(newConverterToWadDebt));
+
+        // chec success when DebtTokenMigrator
+        vm.prank(address(debtTokenMigrator));
+        vault.migrateDebtToken(address(newToken), address(newConverterToWadDebt));
+
+        assertEq(address(vault.debtToken()), address(newToken));
+        assertEq(address(vault.debtConverterToWad()), address(newConverterToWadDebt));
+        // Check that old debt token approval to strategy was set to 0
+        assertEq(usds.allowance(address(vault), address(vaultStrategy)), 0);
+        // Check that new debt token approval to strategy is set to max
         assertEq(newToken.allowance(address(vault), address(vaultStrategy)), type(uint256).max);
     }
 }
@@ -193,7 +589,7 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
     using SafeCast for *;
 
     function test_callistoVault_depositWithdrawOnPausedVault(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         uint256 shares = vault.previewDeposit(assets);
 
         ohm.mint(user, assets);
@@ -201,43 +597,41 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
 
         // test deposit reverts on pause
         vm.prank(admin);
-        vault.setPause(true, true);
+        vault.setDepositsPause(true);
 
         vm.prank(user);
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
+        vm.expectRevert(ICallistoVault.DepositsPaused.selector);
         vault.deposit(assets, user);
 
         vm.prank(user);
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
+        vm.expectRevert(ICallistoVault.DepositsPaused.selector);
         vault.mint(shares, user);
 
         vm.prank(admin);
-        vault.setPause(false, true);
+        vault.setWithdrawalsPause(true);
 
         // test withdraw reverts on pause
         vm.prank(user);
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
+        vm.expectRevert(ICallistoVault.WithdrawalsPaused.selector);
         vault.withdraw(assets, user, user);
 
         vm.prank(user);
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
+        vm.expectRevert(ICallistoVault.WithdrawalsPaused.selector);
         vault.redeem(shares, user, user);
     }
 
-    function test_callistoVault_depositReverts() external {
-        // 1. min deposits check
-        uint256 badAmount = MIN_DEPOSIT - 1;
-        vm.expectRevert(
-            abi.encodeWithSelector(CallistoVaultLogic.AmountLessThanMinDeposit.selector, badAmount, MIN_DEPOSIT)
-        );
-        vault.deposit(badAmount, address(1));
+    function test_callistoVault_depositReverts(uint256 badAmount) external {
+        // 1. min deposits check - use vault.minDeposit() for dynamic testing
+        uint256 currentMinDeposit = vault.minDeposit();
+        badAmount = bound(badAmount, 0, currentMinDeposit - 1);
 
-        vm.expectRevert(abi.encodeWithSelector(CallistoVaultLogic.AmountLessThanMinDeposit.selector, 1, MIN_DEPOSIT));
-        vault.mint(badAmount, address(1));
+        err = abi.encodeWithSelector(ICallistoVault.AmountLessThanMinDeposit.selector, badAmount, currentMinDeposit);
+        vm.expectRevert(err);
+        vault.deposit(badAmount, address(1));
     }
 
     function test_callistoVault_deposit(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         uint256 shares = vault.previewDeposit(assets);
         ohm.mint(user, assets);
 
@@ -255,7 +649,7 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
     }
 
     function test_callistoVault_mint(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         uint256 shares = vault.previewDeposit(assets);
 
         ohm.mint(user, assets);
@@ -274,7 +668,8 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
     }
 
     function test_callistoVault_processPendingDeposits_amountGreaterThanPendingOHMRevert(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        MockSwapper swapper = new MockSwapper(ohm, gohm);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
 
         ohm.mint(user, assets);
         _depositToVault(user, assets);
@@ -284,14 +679,14 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
 
         uint256 badPendingOHM = assets + 1;
 
-        // processPendingDeposits skips if OHMExchangeMode is OlympusStaking
+        // processPendingDeposits skips if OHMToGOHMMode is ZeroWarmup
         staking.setWarmupPeriod(1);
         vm.startPrank(admin);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.Swap);
+        vault.setSwapMode(address(swapper));
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                CallistoVaultLogic.AmountGreaterThanPendingOHMDeposits.selector, badPendingOHM, pendingOHM
+                ICallistoVault.AmountGreaterThanPendingOHMDeposits.selector, badPendingOHM, pendingOHM
             )
         );
 
@@ -303,24 +698,8 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
         vault.execute();
     }
 
-    function test_callistoVault_execute_byHeart(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.DepositsHandled(assets);
-        vault.execute();
-
-        assertEq(vault.pendingOHMDeposits(), 0);
-        assertEq(ohm.balanceOf(address(vault)), 0);
-    }
-
     function test_callistoVault_execute_warmupPeriodError(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
 
         ohm.mint(user, assets);
         _depositToVault(user, assets);
@@ -329,123 +708,17 @@ contract CallistoVaultDepositTests is CallistoVaultTestBase {
         staking.setWarmupPeriod(1);
 
         vm.prank(heart);
-        vm.expectRevert(abi.encodeWithSelector(CallistoVaultLogic.StakingPeriodExists.selector, 1));
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.InvalidWarmupPeriod.selector, 1));
         vault.execute();
-    }
-
-    function test_callistoVault_processPendingDeposits_swapperMode(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        MockSwapper swapper = new MockSwapper(ohm, gohm);
-        // set SWAP mode
-        staking.setWarmupPeriod(1);
-        vm.startPrank(admin);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.Swap);
-        vault.setOHMSwapper(address(swapper));
-        vm.stopPrank();
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.DepositsHandled(assets);
-        vault.processPendingDeposits(assets, new bytes[](0));
-
-        assertEq(vault.pendingOHMDeposits(), 0);
-        assertEq(ohm.balanceOf(address(vault)), 0);
-    }
-
-    function test_callistoVault_processPendingDeposits_waitingForWarmupPeriodMode(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        // set WaitingForWarmupPeriod mode
-        staking.setWarmupPeriod(1);
-        vm.startPrank(admin);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.WaitingForWarmupPeriod);
-        vm.stopPrank();
-
-        vm.prank(multisig);
-        vault.processPendingDeposits(assets, new bytes[](0));
-
-        assertEq(vault.stakedOHM(), assets, "staked OHM > 0");
-        assertEq(vault.pendingOHMDeposits(), 0);
-
-        staking.setEpochNumber(2);
-
-        vm.prank(multisig);
-        vault.processPendingDeposits(MIN_DEPOSIT, new bytes[](0));
-
-        assertEq(vault.stakedOHM(), 0);
-    }
-
-    /**
-     * Tests methods with signature
-     */
-    function test_callistoVault_depositWithSig(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
-
-        uint256 userPrivateKey = 0xA11CE;
-        user = vm.addr(userPrivateKey);
-        uint256 deadline = block.timestamp + 1 hours;
-        ohm.mint(user, assets);
-
-        CallistoVaultLogic.SignatureParameters memory ps = CallistoVaultHelper.getPermitSignature(
-            vm, user, userPrivateKey, assets, deadline, address(ohm), address(vault)
-        );
-
-        CallistoVaultLogic.SignatureParameters memory ds = CallistoVaultHelper.getDepositSignature(
-            vm, userPrivateKey, user, assets, deadline, address(vault), address(this)
-        );
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit IERC4626.Deposit(user, user, assets, shares);
-        vault.depositWithSig(assets, user, user, ps, ds);
-
-        assertEq(ohm.balanceOf(user), 0);
-        assertEq(vault.balanceOf(user), shares);
-        assertEq(vault.totalAssets(), assets);
-        assertEq(vault.pendingOHMDeposits(), assets);
-    }
-
-    function test_callistoVault_mintWithSig(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
-
-        uint256 userPrivateKey = 0xA11CE;
-        user = vm.addr(userPrivateKey);
-        uint256 deadline = block.timestamp + 1 hours;
-        ohm.mint(user, assets);
-
-        CallistoVaultLogic.SignatureParameters memory ps = CallistoVaultHelper.getPermitSignature(
-            vm, user, userPrivateKey, assets, deadline, address(ohm), address(vault)
-        );
-
-        CallistoVaultLogic.SignatureParameters memory ds = CallistoVaultHelper.getMintSignature(
-            vm, userPrivateKey, user, assets, deadline, address(vault), address(this)
-        );
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit IERC4626.Deposit(user, user, assets, shares);
-        vault.mintWithSig(shares, user, user, ps, ds);
-
-        assertEq(ohm.balanceOf(user), 0);
-        assertEq(vault.balanceOf(user), shares);
-        assertEq(vault.totalAssets(), assets);
-        assertEq(vault.pendingOHMDeposits(), assets);
     }
 }
 
 contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
     using SafeCast for *;
+    using SafeERC20 for IERC20;
 
     function test_callistoVault_withdrawSimple(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         uint256 shares = vault.previewDeposit(assets);
 
         ohm.mint(user, assets);
@@ -464,7 +737,7 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
     }
 
     function test_callistoVault_redeemSimple(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         uint256 shares = vault.previewDeposit(assets);
 
         ohm.mint(user, assets);
@@ -483,132 +756,66 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
     }
 
     function test_callistoVault_withdrawReverts(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
+
+        ohm.mint(user, assets);
+        uint256 shares = _depositToVault(user, assets);
+
+        uint256 maxWithdraw = vault.maxWithdraw(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(this), 0, shares)
+        );
+        vault.withdraw(maxWithdraw, user, user);
+
+        // 1. check min amount of withdraw
+        vm.expectRevert(
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxWithdraw.selector, user, maxWithdraw + 1, maxWithdraw)
+        );
+        vm.prank(user);
+        vault.withdraw(maxWithdraw + 1, user, user);
+
+        vm.expectRevert(ICallistoVault.ZeroValue.selector);
+        vm.prank(user);
+        vault.withdraw(0, user, user);
+
+        // 2. paused checks
+        vm.prank(admin);
+        vault.setWithdrawalsPause(true);
+
+        vm.expectRevert(ICallistoVault.WithdrawalsPaused.selector);
+        vm.prank(user);
+        vault.withdraw(assets, user, user);
+    }
+
+    function test_callistoVault_redeemReverts(uint256 assets) external {
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         uint256 shares = vault.previewDeposit(assets);
 
         ohm.mint(user, assets);
         _depositToVault(user, assets);
 
-        // 1. check min amount of withdraw
-        vm.expectRevert(
-            abi.encodeWithSelector(CallistoOHMVaultBase.ERC4626ExceededMaxWithdraw.selector, address(1), MIN_DEPOSIT, 0)
-        );
-        vault.withdraw(MIN_DEPOSIT, address(1), address(1));
+        uint256 maxRedeem = vault.maxRedeem(user);
+
+        vm.expectRevert();
+        vault.redeem(maxRedeem, user, user);
 
         vm.expectRevert(
-            abi.encodeWithSelector(CallistoOHMVaultBase.ERC4626ExceededMaxRedeem.selector, address(1), MIN_DEPOSIT, 0)
+            abi.encodeWithSelector(ERC4626.ERC4626ExceededMaxRedeem.selector, user, maxRedeem + 1, maxRedeem)
         );
-        vault.redeem(MIN_DEPOSIT, address(1), address(1));
+        vm.prank(user);
+        vault.redeem(maxRedeem + 1, user, user);
 
-        vm.expectRevert(CallistoVaultLogic.ZeroValue.selector);
-        vault.withdraw(0, user, user);
-
-        vm.expectRevert(CallistoVaultLogic.ZeroOHM.selector);
+        vm.expectRevert(ICallistoVault.ZeroOHM.selector);
+        vm.prank(user);
         vault.redeem(0, user, user);
 
         // 2. paused checks
         vm.prank(admin);
-        vault.setPause(false, true);
+        vault.setWithdrawalsPause(true);
 
-        vm.startPrank(user);
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
-        vault.withdraw(assets, user, user);
-
-        vm.expectRevert(CallistoVaultLogic.EnforcedPause.selector);
+        vm.expectRevert(ICallistoVault.WithdrawalsPaused.selector);
+        vm.prank(user);
         vault.redeem(shares, user, user);
-    }
-
-    // Withdrawal after user deposit without calling processPendingDeposits()
-    // 1.1. Full withdrawal should succeed. (without calling processPendingDeposits())
-    function test_callistoVault_withdrawFull(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        vm.prank(user);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit IERC4626.Withdraw(user, user, user, assets, shares);
-        vault.withdraw(assets, user, user);
-        assertEq(ohm.balanceOf(address(user)), assets);
-    }
-
-    // Withdrawal after user deposit without calling processPendingDeposits()
-    // 1.2. Partial withdrawal should succeed.
-    function test_callistoVault_withdrawPartial(uint256 assets, uint256 partialAssets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-        uint256 partialShares = vault.previewDeposit(partialAssets);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        vm.prank(user);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit IERC4626.Withdraw(user, user, user, partialAssets, partialShares);
-        vault.withdraw(partialAssets, user, user);
-        assertEq(ohm.balanceOf(address(user)), partialAssets);
-    }
-
-    // Withdrawal when the vault’s Cooler V2 loan has been liquidated
-    //  2.1. If pendingOHM ≥ requested amount → withdrawal should succeed.
-    function test_callistoVault_withdrawEnoughPendingValue(uint256 assets, uint256 partialAssets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-        ohm.mint(user, assets);
-
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        ohm.mint(user2, partialAssets);
-        _depositToVault(user2, partialAssets);
-
-        assertEq(vault.pendingOHMDeposits(), partialAssets);
-
-        vm.prank(user);
-        vault.withdraw(partialAssets, user, user);
-        assertEq(ohm.balanceOf(address(user)), partialAssets);
-        assertEq(vault.pendingOHMDeposits(), 0);
-    }
-
-    // Withdrawal when the vault’s Cooler V2 loan has been liquidated
-    // 2.2. If pendingOHM is insufficient:
-    function test_callistoVault_withdrawInsufficientPendingOHM(uint256 assets, uint256 partialAssets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-        ohm.mint(user, assets);
-
-        _depositToVault(user, assets);
-        uint128 borrowAmount = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        assertEq(vault.pendingOHMDeposits(), 0);
-        assertEq(susds.balanceOf(address(psm)), borrowAmount);
-        assertEq(cooler.accountCollateral(address(vault)), gohm.balanceTo(assets));
-
-        uint256 partialDebt = (borrowAmount * partialAssets) / assets;
-        cooler.setDebtDelta(-(partialDebt).toInt256().toInt128());
-        cooler.setRepaymentAmount(partialDebt.toUint128());
-
-        vm.prank(user);
-        vault.withdraw(partialAssets, user, user);
-        assertEq(ohm.balanceOf(address(user)), partialAssets);
-        assertEq(susds.balanceOf(address(psm)), borrowAmount - partialDebt);
-        assertEq(cooler.accountCollateral(address(vault)), gohm.balanceTo(assets - partialAssets));
     }
 
     /**
@@ -634,36 +841,6 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
         assertEq(cooler.accountCollateral(address(vault)), 0);
         // 2. mint extra OHM to vault
         ohm.mint(address(vault), partialAssets);
-    }
-
-    // 2.2.2. If there is not enough OHM → should revert.
-    function test_callistoVault_withdrawCoolerV2LoanHasBeenLiquidated_Revert(uint256 assets, uint256 partialAssets)
-        external
-    {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-
-        _prepareWithdrawCoolerV2LoanHasBeenLiquidated(assets, partialAssets);
-
-        // check revert when not enough OHM
-        vm.prank(user);
-        vm.expectRevert();
-        vault.withdraw(assets, user, user);
-    }
-
-    // 2.2.1. If the collateral=0 and contract has enough OHM in its balance → withdrawal should succeed.
-    function test_callistoVault_withdrawCoolerV2LoanHasBeenLiquidated_Ok(uint256 assets, uint256 partialAssets)
-        external
-    {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-
-        _prepareWithdrawCoolerV2LoanHasBeenLiquidated(assets, partialAssets);
-
-        // withdraw assets directly from OHM wallet
-        vm.prank(user);
-        vault.withdraw(partialAssets, user, user);
-        assertEq(ohm.balanceOf(address(user)), partialAssets);
     }
 
     /**
@@ -694,41 +871,6 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
         assertEq(cooler.accountCollateral(address(vault)), gohm.balanceTo(assets - partialAssets));
     }
 
-    // 3.1. If the available gOHM in Cooler is less than required due to rounding → should revert.
-    function test_callistoVault_withdrawalEdgeCaseDueToRoundingErrorInGOHM_Revert(uint256 assets, uint256 partialAssets)
-        external
-    {
-        assets = bound(assets, MIN_DEPOSIT + 10, MAX_DEPOSIT);
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-        _prepareWithdrawalEdgeCaseDueToRounding(assets, partialAssets);
-
-        vm.startPrank(user);
-        vm.expectRevert(
-            abi.encodeWithSelector(CallistoVaultLogic.NotEnoughGOHM.selector, gohm.balanceTo(partialAssets))
-        );
-        vault.withdraw(assets, user, user);
-    }
-
-    // 3.2. After the protocol sends the missing gOHM directly to the vault → withdrawal should succeed.
-    function test_callistoVault_withdrawalEdgeCaseDueToRoundingErrorInGOHM_Ok(uint256 assets, uint256 partialAssets)
-        external
-    {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
-
-        partialAssets = bound(partialAssets, MIN_DEPOSIT, assets - 1);
-        _prepareWithdrawalEdgeCaseDueToRounding(assets, partialAssets);
-
-        // protocol sends the missing gOHM directly to the vault
-        gohm.mint(address(vault), gohm.balanceTo(partialAssets));
-
-        // withdraw must be success
-        vm.prank(user);
-        uint256 withdrawShares = vault.withdraw(assets, user, user);
-        assertEq(withdrawShares, shares);
-        assertEq(ohm.balanceOf(address(user)), assets);
-    }
-
     /**
      * PSM has insufficient USDS to repay Cooler debt
      */
@@ -751,120 +893,8 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
         return insufficientUsds;
     }
 
-    // 4.2. If the user has not approved USDS spend → should revert.
-    function test_callistoVault_withdrawPSMhasInsufficientUSDS_Revert(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        _prepareInsufficientUsdsInPSM(assets);
-
-        // revert with NotEnoughGOHM on withdraw
-        vm.prank(user);
-        vm.expectRevert();
-        vault.withdraw(assets, user, user);
-    }
-
-    // 4.1. If the user has approved USDS spend by the vault → vault pulls remaining USDS and withdrawal should succeed.
-    function test_callistoVault_withdrawPSMhasInsufficientUSDS_Ok(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        uint256 insufficientUsds = _prepareInsufficientUsdsInPSM(assets);
-        uint256 shares = vault.previewDeposit(assets);
-
-        vm.startPrank(user);
-        // mint and approve susds
-        usds.mint(user, insufficientUsds);
-        usds.approve(address(vault), insufficientUsds);
-
-        // withdraw must be success
-        uint256 withdrawsShares = vault.withdraw(assets, user, user);
-        assertEq(withdrawsShares, shares);
-        assertEq(ohm.balanceOf(address(user)), assets);
-
-        assertEq(vault.reimbursementClaims(address(user)), insufficientUsds);
-    }
-
-    // 4.1. If the user has approved USDS spend by the vault → vault pulls remaining USDS and withdrawal should succeed.
-    // And claim reimbursment
-    function test_callistoVault_withdrawPSMhasInsufficientUSDS_WithClaimReimbursement(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        uint256 insufficientUsds = _prepareInsufficientUsdsInPSM(assets);
-
-        vm.startPrank(user);
-        // mint and approve susds
-        usds.mint(user, insufficientUsds);
-        usds.approve(address(vault), insufficientUsds);
-        // withdraw must be success
-        vault.withdraw(assets, user, user);
-        assertEq(vault.reimbursementClaims(address(user)), insufficientUsds);
-        // sell usds for liquidity
-        _sellUSDStoPSM(insufficientUsds);
-        // claim reimbursement for user
-        vault.claimReimbursement(user);
-        assertEq(usds.balanceOf(address(user)), insufficientUsds);
-        assertEq(vault.reimbursementClaims(address(user)), 0);
-    }
-
-    function test_callistoVault_withdrawYieldToTreasury_full(uint256 assets, uint256 yuild) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        yuild = bound(yuild, MIN_DEPOSIT, assets);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint128 borrowAmount = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        assertEq(susds.balanceOf(address(psm)), borrowAmount);
-        usds.mint(address(susds), yuild);
-
-        uint256 totalYield = vault.totalYield();
-        assertEq(totalYield, yuild - 1);
-
-        vm.expectRevert(abi.encodeWithSelector(CommonRoles.Unauthorized.selector, address(this)));
-        vault.sweepYield(totalYield);
-
-        vm.prank(admin);
-        vm.expectRevert(
-            abi.encodeWithSelector(CallistoVaultLogic.YieldWithdrawalExceedsTotalYield.selector, totalYield)
-        );
-        vault.sweepYield(totalYield + 1);
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.YieldWithdrawnToTreasury(totalYield);
-        vault.sweepYield(type(uint256).max);
-
-        assertEq(usds.balanceOf(address(treasury)), totalYield);
-        assertEq(vault.totalYield(), 0);
-    }
-
-    function test_callistoVault_withdrawYieldToTreasury_partial(uint256 assets, uint256 yuild, uint256 partialYuild)
-        external
-    {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        yuild = bound(yuild, MIN_DEPOSIT, assets);
-        partialYuild = bound(partialYuild, 1, yuild - 1);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint128 borrowAmount = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        assertEq(susds.balanceOf(address(psm)), borrowAmount);
-        usds.mint(address(susds), yuild);
-        uint256 totalYield = vault.totalYield();
-        assertEq(totalYield, yuild - 1);
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.YieldWithdrawnToTreasury(partialYuild);
-        vault.sweepYield(partialYuild);
-
-        assertEq(usds.balanceOf(address(treasury)), partialYuild);
-        assertEq(vault.totalYield(), totalYield - partialYuild);
-    }
-
     function test_callistoVault_cancelOHMStake(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
         ohm.mint(user, assets);
         _depositToVault(user, assets);
 
@@ -872,101 +902,31 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
         vault.cancelOHMStake();
 
         vm.prank(multisig);
-        vm.expectRevert(CallistoVaultLogic.ZeroValue.selector);
+        vm.expectRevert(ICallistoVault.ZeroValue.selector);
         vault.cancelOHMStake();
 
-        // set WaitingForWarmupPeriod mode
+        // set ActiveWarmup mode
         staking.setWarmupPeriod(1);
         vm.startPrank(admin);
-        vault.setOHMExchangeMode(CallistoVaultLogic.OHMExchangeMode.WaitingForWarmupPeriod);
+        vault.setActiveWarmupMode();
         vm.stopPrank();
 
         vm.prank(heart);
         vault.execute();
 
-        assertEq(vault.stakedOHM(), 0, "staked OHM == 0 after execute");
+        assertEq(vault.pendingOHMWarmupStaking(), 0, "pendingOHMWarmUpStaking OHM == 0 after execute");
 
         vault.processPendingDeposits(assets, new bytes[](0));
 
-        assertEq(vault.stakedOHM(), assets, "staked OHM > 0 after processPendingDeposits");
+        assertEq(vault.pendingOHMWarmupStaking(), assets, "staked OHM > 0 after processPendingDeposits");
         assertEq(vault.pendingOHMDeposits(), 0);
 
         vm.prank(multisig);
         vault.cancelOHMStake();
 
-        assertEq(vault.stakedOHM(), 0);
+        assertEq(vault.pendingOHMWarmupStaking(), 0);
         assertEq(vault.pendingOHMDeposits(), assets);
         assertEq(ohm.balanceOf(address(vault)), assets);
-    }
-
-    function test_callistoVault_withdrawExcessGOHM_full(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 indexInc = 1e9;
-
-        gohm.setIndex(gohm.index() + indexInc);
-
-        uint256 excessGOHM = vault.excessGOHM();
-        assertGt(excessGOHM, 0);
-
-        vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(CallistoVaultLogic.NotEnoughGOHM.selector, 1));
-        vault.withdrawExcessGOHM(excessGOHM + 1, user);
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.GOHMExcessWithdrawn(user, excessGOHM);
-        vault.withdrawExcessGOHM(excessGOHM, user);
-    }
-
-    function test_callistoVault_withdrawExcessGOHM_noExcessGOHMreve(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 indexInc = 1e9;
-
-        gohm.setIndex(gohm.index() + indexInc);
-        _liquidateVaultPositionInCooler();
-
-        uint256 excessGOHM = vault.excessGOHM();
-        vm.prank(admin);
-        vm.expectRevert(CallistoVaultLogic.NoExcessGOHM.selector);
-        vault.withdrawExcessGOHM(excessGOHM, user);
-    }
-
-    function test_callistoVault_withdrawExcessGOHM_partial(uint256 assets, uint256 partialAssets) external {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 indexInc = 1e9;
-
-        gohm.setIndex(gohm.index() + indexInc);
-
-        uint256 excessGOHM = vault.excessGOHM();
-        assertGt(excessGOHM, 0);
-
-        partialAssets = bound(partialAssets, 1, excessGOHM - 1);
-
-        vm.prank(admin);
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.GOHMExcessWithdrawn(user, partialAssets);
-        vault.withdrawExcessGOHM(partialAssets, user);
     }
 
     function _prepareForReimbursement(uint256 amount) internal {
@@ -976,228 +936,358 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
         usds.approve(address(vault), amount);
     }
 
-    function test_callistoVault_claimReimbursement_fromPSM(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
+    function test_callistoVault_MultipleUsers_MintRedeem_Security() external {
+        uint256 minDeposit = vault.minDeposit();
+        uint256 sharesEnding = 1e9 - 1; // 1 OHM is 1e9, so we want to get max cOHM to mint but be less than
+        uint256 assetsEnding = 1;
+        uint256 shareAmount = minDeposit * 1e9; // x shares (18 decimals)
+        uint256 shareAmountWithEnding = minDeposit * 1e9 + sharesEnding; // x shares (18 decimals)
+        uint256 assetAmountWithEnding = minDeposit + assetsEnding; // x assets (9 decimals) - 1:1 ratio
+        uint256 userCount = 100;
+        address[] memory users = new address[](userCount);
 
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint128 debtDelta = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 reimbursementValue = debtDelta;
-
-        _prepareForReimbursement(reimbursementValue);
-        vault.repayCoolerDebt(debtDelta);
-
-        assertEq(usds.balanceOf(address(psm)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), reimbursementValue);
-
-        // add USDS to PSM
-        ohm.mint(user2, assets * 2);
-        _depositToVault(user2, assets * 2);
-
-        vm.prank(heart);
-        vault.execute();
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.ReimbursementClaimed(address(this), debtDelta);
-        vault.claimReimbursement(address(this));
-
-        assertEq(usds.balanceOf(address(this)), debtDelta);
-        assertEq(vault.reimbursementClaims(address(this)), 0);
-    }
-
-    function test_callistoVault_claimReimbursement_directFromVault(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-
-        uint128 debtDelta = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 reimbursementValue = debtDelta;
-
-        _prepareForReimbursement(reimbursementValue);
-        vault.repayCoolerDebt(debtDelta);
-
-        assertEq(usds.balanceOf(address(psm)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), reimbursementValue);
-
-        // add USDS to vault
-        usds.mint(address(vault), debtDelta);
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.ReimbursementClaimed(address(this), debtDelta);
-        vault.claimReimbursement(address(this));
-
-        assertEq(usds.balanceOf(address(this)), debtDelta);
-        assertEq(usds.balanceOf(address(vault)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), 0);
-    }
-
-    function test_callistoVault_claimReimbursement_fromPSMAndDirectFromVault(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT * 2, MAX_DEPOSIT);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint128 debtDelta = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 reimbursementValue = debtDelta;
-
-        _prepareForReimbursement(reimbursementValue);
-        vault.repayCoolerDebt(debtDelta);
-
-        assertEq(usds.balanceOf(address(psm)), 0);
-        assertEq(usds.balanceOf(address(vault)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), reimbursementValue);
-
-        // return half USDS to PSM
-        uint128 halfAssets = (debtDelta / 2).toUint128();
-
-        _sellUSDStoPSM(halfAssets);
-
-        // also add half USDS to vault
-        usds.mint(address(vault), debtDelta - halfAssets);
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.ReimbursementClaimed(address(this), debtDelta);
-        vault.claimReimbursement(address(this));
-
-        assertEq(usds.balanceOf(address(this)), debtDelta);
-        assertEq(usds.balanceOf(address(vault)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), 0);
-    }
-
-    function test_callistoVault_repayCoolerDebt_full(uint256 assets, bool withReimbursement) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint128 debtDelta = _prepareCoolerAmounts(assets);
-
-        vm.prank(heart);
-        vault.execute();
-
-        uint256 reimbursementValue;
-
-        if (withReimbursement) {
-            reimbursementValue = debtDelta;
-            _prepareForReimbursement(reimbursementValue);
+        // Create count users and prepare OHM for each
+        for (uint256 i = 0; i < userCount; i++) {
+            users[i] = makeAddr(string(abi.encodePacked("user", vm.toString(i))));
+            ohm.mint(users[i], assetAmountWithEnding);
         }
 
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.CoolerDebtRepaid(address(this), debtDelta);
-        vault.repayCoolerDebt(debtDelta);
-        assertEq(usds.balanceOf(address(psm)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), reimbursementValue);
+        // Store initial vault OHM balance and total supply
+        uint256 initialVaultOHMBalance = ohm.balanceOf(address(vault));
+
+        // Each user mints 1e6 shares
+        for (uint256 i = 0; i < userCount; i++) {
+            vm.startPrank(users[i]);
+            ohm.approve(address(vault), assetAmountWithEnding);
+
+            // Call mint() function to mint shareAmount shares
+            uint256 actualAssets = vault.mint(shareAmount + sharesEnding, users[i]);
+
+            // Verify mint worked correctly
+            assertEq(actualAssets, assetAmountWithEnding, "Assets should equal expected amount");
+            assertEq(vault.balanceOf(users[i]), shareAmountWithEnding, "User should have correct share balance");
+            assertEq(ohm.balanceOf(users[i]), 0, "User should have no OHM left");
+            vm.stopPrank();
+        }
+
+        // Verify total state after all mints
+        uint256 totalSharesExpected = shareAmountWithEnding * userCount;
+        uint256 totalAssetsExpected = assetAmountWithEnding * userCount;
+
+        assertEq(vault.totalSupply(), totalSharesExpected, "Total supply should match expected");
+        assertEq(vault.totalAssets(), totalAssetsExpected, "Total assets should match expected");
+        assertEq(vault.pendingOHMDeposits(), totalAssetsExpected, "All OHM should be pending");
+
+        // Each user redeems all their shares
+        for (uint256 i = 0; i < userCount; i++) {
+            vm.startPrank(users[i]);
+
+            // Verify user has expected shares before redemption
+            assertEq(vault.balanceOf(users[i]), shareAmount + sharesEnding, "User should have shares before redemption");
+
+            // Call redeem() function to redeem all shares
+            uint256 assetsReceived = vault.redeem(shareAmount, users[i], users[i]);
+
+            // Verify redemption worked correctly
+            assertEq(assetsReceived, assetAmountWithEnding - 1, "Should receive expected asset amount");
+            assertEq(vault.balanceOf(users[i]), sharesEnding, "User should have 0 shares after redemption");
+            assertEq(
+                ohm.balanceOf(users[i]),
+                assetAmountWithEnding - 1,
+                "User should have received OHM back without 1 wei slippage"
+            );
+            vm.stopPrank();
+        }
+
+        // Final security assertions
+
+        // 1. All users should have 0 share balance
+        for (uint256 i = 0; i < userCount; i++) {
+            assertEq(vault.balanceOf(users[i]), sharesEnding, "All users should have 0 shares");
+        }
+
+        // 2. Vault should have same total supply as initially (all shares burned)
+        assertEq(vault.totalSupply(), sharesEnding * userCount, "Total supply should return to initial state");
+
+        // 3. Total assets should return to initial state
+        assertEq(
+            vault.totalAssets(),
+            assetsEnding * userCount,
+            "Total assets should still keep ohm ending after all redemptions"
+        );
+
+        // 4. Verify that vault's OHM balance is protected - it should not decrease beyond what was withdrawn
+        uint256 vaultOHMAfterRedemptions = ohm.balanceOf(address(vault));
+        uint256 expectedVaultOHMBalance = initialVaultOHMBalance;
+        assertEq(
+            vaultOHMAfterRedemptions,
+            expectedVaultOHMBalance + assetsEnding * userCount,
+            "Vault OHM balance should be protected"
+        );
+
+        // 5. Verify that no OHM was "stolen" - total OHM in system should be conserved
+        uint256 totalOHMInUsers = 0;
+        for (uint256 i = 0; i < userCount; i++) {
+            totalOHMInUsers += ohm.balanceOf(users[i]);
+        }
+
+        uint256 expectedTotalOHM = totalAssetsExpected - assetsEnding * userCount; // All users should get back their
+            // deposited OHM
+        assertEq(totalOHMInUsers, expectedTotalOHM, "Total OHM should be conserved - no theft possible");
+
+        // 6. Verify vault state is clean
+        assertEq(vault.pendingOHMDeposits(), assetsEnding * userCount, "No pending deposits should remain");
+
+        // 8. Verify that attempting to redeem non-existent shares fails
+        vm.expectRevert();
+        vm.prank(users[0]);
+        vault.redeem(1, users[0], users[0]);
     }
 
-    function test_callistoVault_repayCoolerDebt_partial(uint256 assets, uint128 partialAssets, bool withReimbursement)
+    function test_callistoVault_AliceTransferToBob_MintRedeem_Security(uint256 sharesEnding) external {
+        sharesEnding = bound(sharesEnding, 1, 1e9 - 1);
+        uint256 assetsEnding = 1;
+        uint256 shareAmount = 1.1e6 * 1e18 + sharesEnding; // 1e6 shares (18 decimals)
+        uint256 assetAmount = 1.1e6 * 1e9 + assetsEnding; // 1e6 assets (9 decimals) - 1:1 ratio
+        uint256 halfShares = shareAmount / 2;
+        uint256 halfAssets = assetAmount / 2;
+
+        address alice = makeAddr("alice");
+        address bob = makeAddr("bob");
+
+        // Setup: Give Alice the OHM tokens enough to cover shares including sharesEnding
+        ohm.mint(alice, assetAmount);
+
+        // Store initial vault state
+
+        // Alice mints 1e6 shares
+        vm.startPrank(alice);
+        ohm.approve(address(vault), assetAmount);
+        uint256 actualAssets = vault.mint(shareAmount, alice);
+        vm.stopPrank();
+
+        // Verify Alice's mint
+        assertEq(actualAssets, assetAmount, "Alice should deposit expected asset amount");
+        assertEq(vault.balanceOf(alice), shareAmount, "Alice should have minted shares");
+        assertEq(ohm.balanceOf(alice), 0, "Alice should have no OHM left");
+        assertEq(vault.totalSupply(), shareAmount, "Total supply should increase");
+        assertEq(vault.totalAssets(), assetAmount, "Total assets should match Alice's deposit");
+
+        // Alice transfers half of her shares to Bob
+        vm.prank(alice);
+        IERC20(address(vault)).safeTransfer(bob, halfShares);
+
+        // Verify transfer
+        assertEq(vault.balanceOf(alice), shareAmount - halfShares, "Alice should have half shares after transfer");
+        assertEq(vault.balanceOf(bob), halfShares, "Bob should have half shares after transfer");
+        assertEq(vault.totalSupply(), shareAmount, "Total supply should remain same after transfer");
+        assertEq(vault.totalAssets(), assetAmount, "Total assets should remain same after transfer");
+
+        // Record balances before redemption
+        uint256 aliceOHMBefore = ohm.balanceOf(alice);
+        uint256 bobOHMBefore = ohm.balanceOf(bob);
+
+        // Alice redeems her remaining half shares
+        vm.startPrank(alice);
+        uint256 aliceAssetsReceived = vault.redeem(shareAmount - halfShares, alice, alice);
+        vm.stopPrank();
+
+        // Verify Alice's redemption
+        assertEq(aliceAssetsReceived, halfAssets, "Alice should receive half assets");
+        assertEq(vault.balanceOf(alice), 0, "Alice should have 0 shares after redemption");
+        assertEq(ohm.balanceOf(alice), aliceOHMBefore + halfAssets, "Alice should receive her OHM");
+
+        // Bob redeems his half shares
+        vm.startPrank(bob);
+        uint256 bobAssetsReceived = vault.redeem(halfShares, bob, bob);
+        vm.stopPrank();
+
+        // Verify Bob's redemption
+        assertEq(bobAssetsReceived, halfAssets, "Bob should receive half assets");
+        assertEq(vault.balanceOf(bob), 0, "Bob should have 0 shares after redemption");
+        assertEq(ohm.balanceOf(bob), bobOHMBefore + halfAssets, "Bob should receive his OHM");
+
+        // Final security assertions
+
+        // 1. Both users should have 0 shares
+        assertEq(vault.balanceOf(alice), 0, "Alice should have 0 shares");
+        assertEq(vault.balanceOf(bob), 0, "Bob should have 0 shares");
+
+        // 2. Total supply should return to initial state
+        assertEq(vault.totalSupply(), 0, "Total supply should return to initial state");
+
+        // 3. Total assets should be 0
+        assertEq(vault.totalAssets(), 1, "1 asset stays forever in the vault due to shares rounding down during redeem");
+
+        // 4. Verify OHM conservation - total OHM distributed equals original deposit
+        uint256 usersBalances = ohm.balanceOf(alice) + ohm.balanceOf(bob);
+        assertEq(usersBalances, assetAmount - assetsEnding, "Total OHM distributed should be lower on assetsEnding");
+
+        // 5. Verify vault's OHM balance is protected
+        uint256 vaultOHMAfter = ohm.balanceOf(address(vault));
+        assertEq(vaultOHMAfter, assetsEnding, "Vault OHM balance should be protected");
+
+        // 6. Verify clean vault state
+        assertEq(vault.pendingOHMDeposits(), assetsEnding, "assetsEnding left over counted in pending");
+
+        // 7. Verify proper share accounting - no shares should remain
+        assertEq(vault.totalSupply(), 0, "All new cOHM should be burned");
+
+        // 8. Security check: Verify that neither user can redeem again
+        vm.expectRevert();
+        vm.prank(alice);
+        vault.redeem(1, alice, alice);
+
+        vm.expectRevert();
+        vm.prank(bob);
+        vault.redeem(1, bob, bob);
+
+        // 9. Additional security: Verify that the transfer + redemption pattern doesn't allow any exploitation
+        // The sum of what Alice and Bob received should exactly equal what Alice originally deposited
+        assertEq(
+            aliceAssetsReceived + bobAssetsReceived,
+            assetAmount - assetsEnding,
+            "Sum of redemptions should equal original deposit"
+        );
+
+        // 10. Verify that share transfers work correctly with the vault's 1:1 asset-to-share ratio
+        // Alice deposited assetAmount and got shareAmount, then split it 50/50
+        // Each person should get exactly half the assets back
+        assertEq(aliceAssetsReceived, halfAssets, "Alice's redemption should be exactly half");
+        assertEq(bobAssetsReceived, halfAssets, "Bob's redemption should be exactly half");
+
+        // 11. Final security assertion: No double-spending or asset inflation possible
+        uint256 totalSystemOHM = ohm.balanceOf(alice) + ohm.balanceOf(bob) + ohm.balanceOf(address(vault));
+        uint256 expectedSystemOHM = assetAmount; // Initial vault balance + Alice's deposit
+        assertEq(totalSystemOHM, expectedSystemOHM, "Total system OHM should be conserved - no inflation possible");
+    }
+
+    function test_callistoVault_withdraw_permittedAddressCanWithdraw(uint256 assets, address owner, address permitted)
         external
     {
-        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint128 debtDelta = _prepareCoolerAmounts(assets);
+        vm.assume(owner != address(0) && owner != address(vault) && owner != address(this));
+        vm.assume(permitted != address(0) && permitted != owner);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
 
-        vm.prank(heart);
-        vault.execute();
+        ohm.mint(owner, assets);
+        uint256 shares = _depositToVault(owner, assets);
 
-        partialAssets = bound(partialAssets, 1, debtDelta - 1).toUint128();
-        uint256 reimbursementValue;
+        // Also need to grant ERC20 allowance for the shares
+        vm.prank(owner);
+        vault.approve(permitted, shares);
 
-        if (withReimbursement) {
-            reimbursementValue = partialAssets; // TODO: reimbursement half part of debt
-            _prepareForReimbursement(debtDelta);
-        }
+        vm.prank(permitted);
+        vault.withdraw(assets, permitted, owner);
 
-        cooler.setRepaymentAmount(partialAssets);
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit CallistoVaultLogic.CoolerDebtRepaid(address(this), partialAssets);
-        vault.repayCoolerDebt(partialAssets);
-
-        assertEq(usds.balanceOf(address(psm)), 0);
-        assertEq(vault.reimbursementClaims(address(this)), reimbursementValue);
+        assertEq(ohm.balanceOf(permitted), assets);
+        assertEq(vault.balanceOf(owner), 0);
     }
 
-    function test_callistoVault_withdrawWithSig(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
+    function test_callistoVault_withdraw_unauthorizedAddressCannotWithdraw(
+        uint256 assets,
+        address owner,
+        address unauthorized
+    ) external {
+        vm.assume(owner != address(0) && owner != address(vault) && owner != address(this));
+        vm.assume(unauthorized != address(0) && unauthorized != owner);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
 
-        uint256 userPrivateKey = 0xA11CE;
-        user = vm.addr(userPrivateKey);
-        uint256 deadline = block.timestamp + 1 hours;
-        ohm.mint(user, assets);
+        ohm.mint(owner, assets);
+        uint256 shares = _depositToVault(owner, assets);
 
-        _depositToVault(user, assets);
-
-        CallistoVaultLogic.SignatureParameters memory ds = CallistoVaultHelper.getWithdrawSignature(
-            vm, userPrivateKey, user, assets, deadline, address(vault), address(this)
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, unauthorized, 0, shares)
         );
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit IERC4626.Withdraw(user, user, user, assets, shares);
-        uint256 res = vault.withdrawWithSig(assets, user, user, ds);
-
-        assertEq(res, shares);
-        assertEq(ohm.balanceOf(user), assets);
-        assertEq(vault.balanceOf(user), 0);
-        assertEq(vault.totalAssets(), 0);
+        vm.prank(unauthorized);
+        vault.withdraw(assets, owner, owner);
     }
 
-    function test_callistoVault_redeemWitSig(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
+    function test_callistoVault_withdraw_revokedPermissionCannotWithdraw(
+        uint256 assets,
+        address owner,
+        address previouslyPermitted
+    ) external {
+        vm.assume(owner != address(0) && owner != address(vault) && owner != address(this));
+        vm.assume(previouslyPermitted != address(0) && previouslyPermitted != owner);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
 
-        uint256 userPrivateKey = 0xA11CE;
-        user = vm.addr(userPrivateKey);
-        uint256 deadline = block.timestamp + 1 hours;
-        ohm.mint(user, assets);
+        ohm.mint(owner, assets);
+        uint256 shares = _depositToVault(owner, assets);
 
-        _depositToVault(user, assets);
+        vm.prank(owner);
+        vault.approve(previouslyPermitted, shares);
 
-        CallistoVaultLogic.SignatureParameters memory ds = CallistoVaultHelper.getRedeemSignature(
-            vm, userPrivateKey, user, assets, deadline, address(vault), address(this)
+        vm.prank(owner);
+        vault.approve(previouslyPermitted, 0);
+
+        uint256 maxWithdraw = vault.maxWithdraw(owner);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, previouslyPermitted, 0, shares)
         );
-
-        vm.expectEmit(true, true, true, true, address(vault));
-        emit IERC4626.Withdraw(user, user, user, assets, shares);
-        vault.redeemWithSig(shares, user, user, ds);
-
-        assertEq(ohm.balanceOf(user), assets);
-        assertEq(vault.balanceOf(user), 0);
-        assertEq(vault.totalAssets(), 0);
+        vm.prank(previouslyPermitted);
+        vault.withdraw(maxWithdraw, owner, owner);
     }
 
-    function test_callistoVault_emergencyRedeem(uint256 assets) external {
-        assets = bound(assets, MIN_DEPOSIT, MAX_DEPOSIT);
-        uint256 shares = vault.previewDeposit(assets);
-        ohm.mint(user, assets);
-        _depositToVault(user, assets);
-        uint256 borrowAmount = _prepareCoolerAmounts(assets);
+    function test_callistoVault_withdraw_multiplePermissions(
+        uint256 assets,
+        address owner,
+        address permitted1,
+        address permitted2
+    ) external {
+        vm.assume(owner != address(0) && owner != address(vault) && owner != address(this));
+        vm.assume(permitted1 != address(0) && permitted1 != owner);
+        vm.assume(permitted2 != address(0) && permitted2 != owner && permitted2 != permitted1);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
 
-        assertEq(psm.suppliedByLP(), 0);
+        ohm.mint(owner, assets * 2);
+        uint256 shares = _depositToVault(owner, assets * 2);
 
-        // should skip and return 0
-        vault.emergencyRedeem(1234);
+        // Grant ERC20 allowances
+        vm.prank(owner);
+        vault.approve(permitted1, shares);
+        vm.prank(owner);
+        vault.approve(permitted2, shares);
 
-        vm.prank(heart);
-        vault.execute();
-        _liquidateVaultPositionInCooler();
+        vm.prank(permitted1);
+        vault.withdraw(assets, owner, owner);
 
-        vm.prank(user);
-        uint256 returnedUSDS = vault.emergencyRedeem(shares);
+        vm.prank(permitted2);
+        vault.withdraw(assets, owner, owner);
 
-        assertEq(returnedUSDS, borrowAmount);
-        assertEq(usds.balanceOf(address(user)), borrowAmount);
+        assertEq(ohm.balanceOf(owner), assets * 2);
+        assertEq(vault.balanceOf(owner), 0);
+    }
+
+    function test_callistoVault_redeem_permittedAddressCanRedeem(uint256 assets, address owner, address permitted)
+        external
+    {
+        vm.assume(owner != address(0) && owner != address(vault) && owner != address(this));
+        vm.assume(permitted != address(0) && permitted != owner);
+        assets = bound(assets, vault.minDeposit(), MAX_DEPOSIT);
+
+        ohm.mint(owner, assets);
+        uint256 shares = _depositToVault(owner, assets);
+
+        // Grant ERC20 allowance for the shares
+        vm.prank(owner);
+        vault.approve(permitted, shares);
+
+        vm.prank(permitted);
+        vault.redeem(shares, permitted, owner);
+
+        assertEq(ohm.balanceOf(permitted), assets);
+        assertEq(vault.balanceOf(owner), 0);
+    }
+}
+
+contract CallistoVaultViewerTests is CallistoVaultTestBase {
+    using SafeCast for *;
+
+    function test_callistoVault_calcDebtToRepay_noDebt() external {
+        // When vault has no position in Cooler, should return (0, 0)
+        (uint128 wadDebt, uint256 debtAmount) = vault.calcDebtToRepay();
+        assertEq(wadDebt, 0);
+        assertEq(debtAmount, 0);
     }
 }

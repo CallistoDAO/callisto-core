@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Unlicense
 pragma solidity ^0.8.24;
 
-import { Vm } from "forge-std/Vm.sol";
+import { Vm } from "forge-std-1.9.6/Vm.sol";
 
 // Common utilities for tests.
 contract UserFactory {
     address internal constant HEVM_ADDRESS = address(bytes20(uint160(uint256(keccak256("hevm cheat code")))));
 
-    Vm internal immutable vm = Vm(HEVM_ADDRESS);
+    Vm internal immutable VM = Vm(HEVM_ADDRESS);
 
     bytes32 internal nextUser = keccak256(abi.encodePacked("users"));
 
@@ -23,7 +23,7 @@ contract UserFactory {
         address[] memory usrs = new address[](userNum);
         for (uint256 i = 0; i < userNum; i++) {
             address user = next();
-            vm.deal(user, 100 ether);
+            VM.deal(user, 100 ether);
             usrs[i] = user;
         }
         return usrs;

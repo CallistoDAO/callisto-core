@@ -2,9 +2,9 @@
 
 pragma solidity ^0.8.4;
 
-import { IERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/IERC20.sol";
-import { IDLGTEv1 } from "../../dependencies/olympus-v3-3.0.0/src/modules/DLGTE/IDLGTE.v1.sol";
 import { ICoolerTreasuryBorrower } from "./ICoolerTreasuryBorrower.sol";
+import { IDLGTEv1 } from "./IDLGTEv1.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 // [Source](https://github.com/OlympusDAO/olympus-v3/blob/a307c4e1dbdadfb1c478fcfcdcb7fbc5e3b5746d/src/policies/interfaces/cooler/IMonoCooler.sol).
 interface IMonoCooler {

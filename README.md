@@ -1,29 +1,50 @@
-# Callisto Core
+# callisto-sandbox
+
+<!-- prettier-ignore-start -->
+
+<!-- toc -->
+
++ [Tech Stack](#tech-stack)
++ [Setup](#setup)
++ [Run Tests](#run-tests)
++ [Lint](#lint)
+
+<!-- tocstop -->
+
+<!-- prettier-ignore-end -->
+
+## Tech Stack
+
+- [Foundry](https://book.getfoundry.sh/) - A smart contract development toolchain.
+- [Solhint](https://github.com/protofire/solhint) - To link Solidity code
+- [slither](https://github.com/crytic/slither) - Static analyze for Solidity
 
 ## Setup
 
-Prerequisites: install [Foundry](https://book.getfoundry.sh/getting-started/installation#using-foundryup).
+To set up the development environment, follow these steps:
 
-To automatically install all the dependencies, run the command:
+1. Install [foundry](https://book.getfoundry.sh/getting-started/installation#using-foundryup)
+1. Ensure you have [pnpm](https://pnpm.io/) installed.
+1. Run the setup command to prepare the environment:
 
 ```shell
-forge soldeer install --clean && forge soldeer update
+pnpm run setup
 ```
 
-## Commands
+## Run Tests
 
-1. To run all the tests, use:
+To execute solidity tests:
 
-   ```shell
-   forge t
-   ```
+```shell
+forge test
+```
 
-2. To run all the tests and generate a code coverage report with a summary:
+## Lint
 
-   ```shell
-   forge coverage --nmco='test/|script/' --ir-minimum --report lcov --report summary
-   ```
+We use [pre-commit](https://pre-commit.com/) to lint the project
 
-## Documentation
+```shell
+pnpm run lint
+```
 
-- [Emergency Redemption Flow](./docs/emergency_redemption_flow.md).
+Lint process covering `solhint`, `forge fmt`, `forge test` and many other checks
