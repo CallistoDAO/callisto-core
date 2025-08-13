@@ -9,9 +9,10 @@ contract DeployDebtTokenMigrator is BaseScript {
 
     function run() public {
         address admin = _envAddress(CALLISTO_ADMIN);
+        address timelock = _envAddress("DEPLOYED_TIMELOCK");
         address cooler = _envAddress("OLYMPUS_COOLER");
 
-        bytes memory encodedArgs = abi.encode(admin, cooler);
+        bytes memory encodedArgs = abi.encode(admin, timelock, cooler);
         bytes memory initCode = abi.encodePacked(type(DebtTokenMigrator).creationCode, encodedArgs);
         string memory name = type(DebtTokenMigrator).name;
         _deploy(name, "DEPLOYED_DEBT_TOKEN_MIGRATOR", _SALT, initCode, true);

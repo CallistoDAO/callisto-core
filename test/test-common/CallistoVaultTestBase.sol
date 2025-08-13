@@ -2,6 +2,7 @@
 
 pragma solidity ^0.8.29;
 
+import { TimelockController } from "../../dependencies/@openzeppelin-contracts-5.3.0/governance/TimelockController.sol";
 import { IERC20, IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { CallistoPSM } from "../../src/external/CallistoPSM.sol";
 import { ConverterToWadDebt } from "../../src/external/ConverterToWadDebt.sol";
@@ -44,6 +45,7 @@ contract CallistoVaultTestBase is KernelTestBase {
     address public exchanger;
     PSMStrategy public psmStrategy;
     DebtTokenMigrator public debtTokenMigrator;
+    TimelockController public timelock;
     ConverterToWadDebt public converterToWadDebt;
     VaultStrategy public vaultStrategy;
     MockStabilityPool public stabilityPool;
@@ -82,7 +84,15 @@ contract CallistoVaultTestBase is KernelTestBase {
             makeAddr("[ False auctioneer ]"),
             makeAddr("[ False Callisto treasury ]")
         );
-        debtTokenMigrator = new DebtTokenMigrator(admin, address(cooler));
+
+        // Create timelock with admin as proposer, executor, and canceller
+        address[] memory proposers = new address[](1);
+        proposers[0] = admin;
+        address[] memory executors = new address[](1);
+        executors[0] = admin;
+        timelock = new TimelockController(0, proposers, executors, address(0)); // 0 delay for tests
+
+        debtTokenMigrator = new DebtTokenMigrator(admin, address(timelock), address(cooler));
         psm = new CallistoPSM(admin, address(usds), address(collar), address(susds), address(psmStrategy));
 
         vaultStrategy = new VaultStrategy(admin, IERC20(address(usds)), address(psm), IERC4626(address(susds)));

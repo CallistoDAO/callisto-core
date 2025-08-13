@@ -7,7 +7,7 @@
   "scripts": {
     "setup": "pnpm i && pnpm tsx setup.ts",
     "generate-abi": "pnpm i && pnpm tsx setup.ts generate-abi",
-    "size": "forge build --sizes src/policies/CallistoVault.sol",
+    "size": "forge build --sizes src/policies/CallistoVault.sol src/external/",
     "test": "forge test",
     "coverage": "pnpm tsx setup.ts coverage",
     "lcov": "forge coverage --no-match-coverage='test/|script/' --ir-minimum --report lcov",

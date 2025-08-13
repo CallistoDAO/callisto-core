@@ -2,18 +2,20 @@
 
 pragma solidity ^0.8.30;
 
+import { TimelockController } from "../../dependencies/@openzeppelin-contracts-5.3.0/governance/TimelockController.sol";
 import { IERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { Math } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/Math.sol";
 import { SafeCast } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/SafeCast.sol";
-
 import { MockConverterToWadDebt } from "../mocks/MockConverterToWadDebt.sol";
 import { MockCoolerTreasuryBorrower } from "../mocks/MockCoolerTreasuryBorrower.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
 import { MockMonoCooler } from "../mocks/MockMonoCooler.sol";
 import { MockSusds } from "../mocks/MockSusds.sol";
 
+import { Ownable } from "../../dependencies/@openzeppelin-contracts-5.3.0/access/Ownable.sol";
 import { CallistoVaultTestForkBase } from "../test-common/CallistoVaultTestForkBase.sol";
-import { DebtTokenMigrator, Ownable } from "src/external/DebtTokenMigrator.sol";
+import { DebtTokenMigrator } from "src/external/DebtTokenMigrator.sol";
+
 import { VaultStrategy } from "src/external/VaultStrategy.sol";
 import { CallistoConstants } from "src/libraries/CallistoConstants.sol";
 
@@ -50,16 +52,18 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
         MockMonoCooler mockCooler = new MockMonoCooler(GOHM, address(newUsds), 1e18, address(treasuryBorrower));
 
         // Create a new migrator that uses the mock cooler (simulates future state)
-        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(mockCooler));
+        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(timelock), address(mockCooler));
         vm.prank(admin);
         testMigrator.initializePSMAddress(address(psm));
 
-        vm.prank(admin);
+        // Use timelock to call setMigration since it's now protected by onlyTimelock
+        vm.startPrank(address(timelock));
         vm.expectEmit(true, true, true, true, address(testMigrator));
         emit DebtTokenMigrator.MigrationSet(
             address(newUsds), address(newSusds), address(converterToWadDebt), migrationTime, slippage
         );
         testMigrator.setMigration(migrationTime, slippage, address(newSusds), address(converterToWadDebt));
+        vm.stopPrank();
 
         assertEq(address(testMigrator.newYieldVault()), address(newSusds), "New yield vault address mismatch");
         assertEq(address(testMigrator.newDebtToken()), address(newUsds), "New debt token address mismatch");
@@ -77,10 +81,11 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
         uint256 slippage = 1000;
         MockERC20 newUsds = new MockERC20("NEW USDS", "NEW USDS", 18);
 
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        vm.expectRevert(abi.encodeWithSelector(TimelockController.TimelockUnauthorizedCaller.selector, address(this)));
         debtTokenMigrator.setMigration(migrationTime, slippage, address(1), address(converterToWadDebt));
 
-        vm.startPrank(admin);
+        // Use timelock for valid setMigration calls
+        vm.startPrank(address(timelock));
 
         vm.expectRevert(DebtTokenMigrator.MigrationTimeInPast.selector);
         debtTokenMigrator.setMigration(block.timestamp, slippage, address(1), address(converterToWadDebt));
@@ -100,11 +105,11 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
         MockCoolerTreasuryBorrower treasuryBorrower = new MockCoolerTreasuryBorrower(address(newUsds)); // cooler uses
             // new USDS
         MockMonoCooler mockCooler = new MockMonoCooler(GOHM, address(newUsds), 1e18, address(treasuryBorrower));
-        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(mockCooler));
+        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(timelock), address(mockCooler));
         vm.prank(admin);
         testMigrator.initializePSMAddress(address(psm));
 
-        vm.prank(admin);
+        vm.prank(address(timelock));
         vm.expectRevert(
             abi.encodeWithSelector(
                 DebtTokenMigrator.YieldVaultHasAnotherAsset.selector, address(USDS), address(newUsds)
@@ -119,7 +124,7 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
         MockSusds newSusds = new MockSusds(IERC20(address(newUsds)));
         MockCoolerTreasuryBorrower treasuryBorrower = new MockCoolerTreasuryBorrower(address(newUsds));
         MockMonoCooler mockCooler = new MockMonoCooler(GOHM, address(newUsds), 1e18, address(treasuryBorrower));
-        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(mockCooler));
+        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(timelock), address(mockCooler));
 
         vm.prank(admin);
         testMigrator.initializePSMAddress(address(psm));
@@ -130,7 +135,7 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
 
         // Set migration for future time
         uint256 futureTime = block.timestamp + 86_400;
-        vm.prank(admin);
+        vm.prank(address(timelock));
         testMigrator.setMigration(futureTime, 0, address(newSusds), address(converterToWadDebt));
 
         // Test before migration time
@@ -147,13 +152,13 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
         MockSusds newSusds = new MockSusds(IERC20(address(newUsds)));
         MockCoolerTreasuryBorrower treasuryBorrower = new MockCoolerTreasuryBorrower(address(newUsds));
         MockMonoCooler mockCooler = new MockMonoCooler(GOHM, address(newUsds), 1e18, address(treasuryBorrower));
-        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(mockCooler));
+        DebtTokenMigrator testMigrator = new DebtTokenMigrator(admin, address(timelock), address(mockCooler));
 
         vm.prank(admin);
         testMigrator.initializePSMAddress(address(psm));
 
         uint256 migrationTime = block.timestamp + 86_400;
-        vm.prank(admin);
+        vm.prank(address(timelock));
         testMigrator.setMigration(migrationTime, 0, address(newSusds), address(converterToWadDebt)); // 0% slippage
 
         vm.warp(migrationTime + 1);
@@ -192,7 +197,7 @@ contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
         vm.mockCall(treasuryBorrower, abi.encodeWithSignature("debtToken()"), abi.encode(address(newUsds)));
 
         uint256 migrationTime = block.timestamp + 86_400;
-        vm.prank(admin);
+        vm.prank(address(timelock));
         debtTokenMigrator.setMigration(migrationTime, 0, address(newSusds), address(_converterToWadDebt));
 
         // Set the migrator in PSM and VaultStrategy to allow migration

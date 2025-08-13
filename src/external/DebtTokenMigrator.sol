@@ -3,6 +3,7 @@
 pragma solidity 0.8.30;
 
 import { Ownable } from "../../dependencies/@openzeppelin-contracts-5.3.0/access/Ownable.sol";
+import { TimelockController } from "../../dependencies/@openzeppelin-contracts-5.3.0/governance/TimelockController.sol";
 import { IERC20Metadata } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC20Metadata.sol";
 import { IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { SafeERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
@@ -18,6 +19,9 @@ import { VaultStrategy } from "./VaultStrategy.sol";
  * Olympus Cooler V2 changes its debt token. Initially, the debt token is USDS and the yield vault is sUSDS.
  */
 contract DebtTokenMigrator is Ownable {
+    /// @notice The timelock controller that governs this contract.
+    TimelockController public immutable TIMELOCK;
+
     using SafeERC20 for IERC20Metadata;
     using Math for uint256;
 
@@ -99,9 +103,19 @@ contract DebtTokenMigrator is Ownable {
         _;
     }
 
+    modifier onlyTimelock() {
+        require(msg.sender == address(TIMELOCK), TimelockController.TimelockUnauthorizedCaller(msg.sender));
+        _;
+    }
+
     // ========== INITIALIZATION ========== //
 
-    constructor(address owner, address olympusCooler) Ownable(owner) nonzeroAddress(olympusCooler) {
+    constructor(address owner_, address timelock_, address olympusCooler)
+        Ownable(owner_)
+        nonzeroAddress(timelock_)
+        nonzeroAddress(olympusCooler)
+    {
+        TIMELOCK = TimelockController(payable(timelock_));
         OLYMPUS_COOLER = IMonoCooler(olympusCooler);
     }
 
@@ -129,7 +143,7 @@ contract DebtTokenMigrator is Ownable {
         uint256 slippage_,
         address newYieldVaultAddr,
         address newConvertorToWadAddr
-    ) external onlyOwner {
+    ) external onlyTimelock {
         require(migrationTime_ > block.timestamp, MigrationTimeInPast());
         require(newConvertorToWadAddr != address(0), ZeroAddress());
 

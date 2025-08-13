@@ -3,7 +3,12 @@
     "type": "constructor",
     "inputs": [
       {
-        "name": "owner",
+        "name": "owner_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "timelock_",
         "type": "address",
         "internalType": "address"
       },
@@ -37,6 +42,19 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "TIMELOCK",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract TimelockController"
       }
     ],
     "stateMutability": "view"
@@ -373,6 +391,17 @@
         "name": "maxDiff",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TimelockUnauthorizedCaller",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
