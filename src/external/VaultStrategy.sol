@@ -21,7 +21,7 @@ import { DebtTokenMigrator } from "./DebtTokenMigrator.sol";
 contract VaultStrategy is Ownable {
     using SafeERC20 for IERC20;
 
-    // ___ IMMUTABLES ___
+    // ========== IMMUTABLES ========== //
 
     /// @notice Callisto Peg Stability Module (PSM) for COLLAR stablecoin.
     CallistoPSM public immutable PSM;
@@ -29,7 +29,7 @@ contract VaultStrategy is Ownable {
     /// @notice The contract address authorized to migrate the debt token.
     address public debtTokenMigrator;
 
-    // ___ STORAGE ___
+    // ========== STORAGE ========== //
 
     /// @notice Callisto vault address.
     address public vault;
@@ -40,7 +40,7 @@ contract VaultStrategy is Ownable {
     /// @notice The ERC4626 yield vault for the debt token (initially sUSDS).
     IERC4626 public yieldVault;
 
-    // ___ EVENTS ___
+    // ========== EVENTS ========== //
 
     /**
      * @notice Emitted when assets are deposited into the yield vault by the Callisto vault.
@@ -76,7 +76,7 @@ contract VaultStrategy is Ownable {
      */
     event DebtTokenMigratorSet(address indexed oldMigrator, address indexed newMigrator);
 
-    // ___ ERRORS ___
+    // ========== ERRORS ========== //
 
     error ZeroAddress();
 
@@ -94,7 +94,7 @@ contract VaultStrategy is Ownable {
 
     error MismatchedCoolerAddress();
 
-    // ___ MODIFIERS ___
+    // ========== MODIFIERS ========== //
 
     modifier onlyVault() {
         require(msg.sender == vault, OnlyVault());
@@ -106,7 +106,7 @@ contract VaultStrategy is Ownable {
         _;
     }
 
-    // ___ INITIALIZATION ___
+    // ========== INITIALIZATION ========== //
 
     /**
      * @dev Initializes strategy with asset, yield vault.
@@ -158,7 +158,7 @@ contract VaultStrategy is Ownable {
         emit DebtTokenMigratorSet(oldMigrator, newMigrator);
     }
 
-    // ___ DEPOSIT & WITHDRAWAL LOGIC ___
+    // ========== DEPOSIT & WITHDRAWAL LOGIC ========== //
 
     /**
      * @notice Deposits `assets` into the yield vault and provides shares to the Callisto PSM as liquidity.
@@ -187,7 +187,7 @@ contract VaultStrategy is Ownable {
         emit Divested(receiver, assets);
     }
 
-    // ___ VIEWERS ___
+    // ========== VIEWERS ========== //
 
     /// @notice Returns total assets invested by the Callisto vault.
     function totalAssetsInvested() external view returns (uint256) {
@@ -204,7 +204,7 @@ contract VaultStrategy is Ownable {
         return assets;
     }
 
-    // ___ DEBT TOKEN MIGRATION LOGIC ___
+    // ========== DEBT TOKEN MIGRATION LOGIC ========== //
 
     /**
      * @notice Migrates to the `newAsset` and `newYieldVault`. Sets infinite approval for the `newYieldVault`.

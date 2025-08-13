@@ -21,7 +21,7 @@ contract DebtTokenMigrator is Ownable {
     using SafeERC20 for IERC20Metadata;
     using Math for uint256;
 
-    // ___ CONSTANTS & IMMUTABLES ___
+    // ========== CONSTANTS & IMMUTABLES ========== //
 
     /// @notice Represents 100.000%.
     uint256 public constant ONE_HUNDRED_PERCENT = 100_000;
@@ -29,7 +29,7 @@ contract DebtTokenMigrator is Ownable {
     /// @notice The Olympus Cooler V2 contract.
     IMonoCooler public immutable OLYMPUS_COOLER;
 
-    // ___ STORAGE ___
+    // ========== STORAGE ========== //
 
     /// @notice Callisto Peg Stability Module (PSM).
     CallistoPSM public psm;
@@ -53,7 +53,7 @@ contract DebtTokenMigrator is Ownable {
      */
     address public newConverterToWadDebt;
 
-    // ___ EVENTS ___
+    // ========== EVENTS ========== //
 
     /// @notice Emitted when the PSM address is set.
     event PSMAddressInitialized(address indexed psm);
@@ -76,7 +76,7 @@ contract DebtTokenMigrator is Ownable {
         uint256 newDebtTokenAmount
     );
 
-    // ___ ERRORS ___
+    // ========== ERRORS ========== //
 
     error ZeroAddress();
 
@@ -92,14 +92,14 @@ contract DebtTokenMigrator is Ownable {
 
     error SlippageExceeded(uint256 diff, uint256 maxDiff);
 
-    // ___ MODIFIERS ___
+    // ========== MODIFIERS ========== //
 
     modifier nonzeroAddress(address addr) {
         require(addr != address(0), ZeroAddress());
         _;
     }
 
-    // ___ INITIALIZATION ___
+    // ========== INITIALIZATION ========== //
 
     constructor(address owner, address olympusCooler) Ownable(owner) nonzeroAddress(olympusCooler) {
         OLYMPUS_COOLER = IMonoCooler(olympusCooler);
@@ -115,7 +115,7 @@ contract DebtTokenMigrator is Ownable {
         emit PSMAddressInitialized(psm_);
     }
 
-    // ___ EXTERNAL FUNCTIONS ___
+    // ========== EXTERNAL FUNCTIONS ========== //
 
     /**
      * @notice Sets migration parameters.
