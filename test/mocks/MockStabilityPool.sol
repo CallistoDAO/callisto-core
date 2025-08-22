@@ -10,12 +10,18 @@ interface IMockDebtToken is ICOLLAR {
 
 contract MockStabilityPool {
     address debtToken;
+    address[] private _assets;
 
     constructor(address debtToken_) {
         debtToken = debtToken_;
+        _assets.push(debtToken);
     }
 
     function deposit(uint256 amount) external {
         IMockDebtToken(debtToken).sendToPool(msg.sender, amount);
+    }
+
+    function getAssets() external view returns (address[] memory) {
+        return _assets;
     }
 }

@@ -16,11 +16,11 @@ import { ReentrancyGuard } from "solmate-6.8.0/utils/ReentrancyGuard.sol";
  * Rewards are released in CALL.
  */
 contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard {
-    // ___ CONSTANTS ___
+    // ========== CONSTANTS ========== //
 
     bytes32 public constant HEART_ADMIN_ROLE = "heart_admin";
 
-    // ___ STORAGE ___
+    // ========== STORAGE ========== //
 
     /// @notice The status of the Heart. If `true`, then beating.
     bool public active;
@@ -41,25 +41,25 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
     MINTRv1 public MINTR;
 
     /// @notice The Callisto vault.
-    IExecutableByHeart public callistoVault;
+    IExecutableByHeart public vault;
 
-    /// @notice The COLLAR burning strategy of the Callisto PSM.
-    IExecutableByHeart public psmStrategy;
+    /// @notice The Callisto PSM.
+    IExecutableByHeart public psm;
 
-    // ___ MODIFIERS ___
+    // ========== MODIFIERS ========== //
 
     modifier onlyActive() {
         require(active, Heart_BeatStopped());
         _;
     }
 
-    // ___ INITIALIZATION AND KERNEL POLICY CONFIGURATION ___
+    // ========== INITIALIZATION AND KERNEL POLICY CONFIGURATION ========== //
 
     /// @notice `auctionDuration_` should be less than or equal to `frequency_`.
     constructor(
         Kernel kernel_,
-        address callistoVault_,
-        address psmStrategy_,
+        address vault_,
+        address psm_,
         uint48 frequency_,
         uint48 auctionDuration_,
         uint256 maxReward_
@@ -68,8 +68,8 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         require(auctionDuration_ <= frequency_, Heart_InvalidParams());
 
         _setFrequency(frequency_);
-        _setCallistoVault(callistoVault_);
-        _setPSMStrategy(psmStrategy_);
+        _setVault(vault_);
+        _setPSM(psm_);
         auctionDuration = auctionDuration_;
         maxReward = maxReward_;
         emit RewardUpdated(maxReward_, auctionDuration_);
@@ -123,16 +123,19 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         uint48 freq = frequency;
         require(currentTime >= lastBeatTime + freq, Heart_OutOfCycle());
 
-        // Handle pending OHM deposits in the Callisto vault.
-        callistoVault.execute();
-
-        // Handle COLLAR burning in the strategy of the Callisto PSM.
-        psmStrategy.execute();
-
         /* Update the timestamp of the last beat.
          * Ensure that the update `frequency` does not change, but prevent multiple beats if one is missed.
-         */
+        */
+        // slither-disable-next-line weak-prng
         lastBeat = currentTime - ((currentTime - lastBeatTime) % freq);
+
+        // Handle pending OHM deposits in the Callisto vault.
+        IExecutableByHeart executable = vault;
+        if (address(executable) != address(0)) executable.execute();
+
+        // Handle excess COLLAR burning in the Callisto PSM.
+        executable = psm;
+        if (address(executable) != address(0)) executable.execute();
 
         // Calculate and issue the reward for the keeper.
         uint256 reward = currentReward(); // 0 <= `reward` <= `maxReward`.
@@ -146,7 +149,7 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         emit Beat(block.timestamp);
     }
 
-    // ___ REWARD CALCULATION ___
+    // ========== REWARD CALCULATION ========== //
 
     /// @inheritdoc ICallistoHeart
     function currentReward() public view returns (uint256) {
@@ -165,7 +168,7 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         return elapsed < duration ? (elapsed * maxReward) / duration : maxReward;
     }
 
-    // ___ ADMINISTRATIVE FUNCTIONALITY ___
+    // ========== ADMINISTRATIVE FUNCTIONALITY ========== //
 
     /// @inheritdoc ICallistoHeart
     function setRewardAuctionParams(uint256 maxReward_, uint48 auctionDuration_) external onlyRole(HEART_ADMIN_ROLE) {
@@ -205,13 +208,13 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
     }
 
     /// @inheritdoc ICallistoHeart
-    function setCallistoVault(address vault) external onlyRole(HEART_ADMIN_ROLE) {
-        _setCallistoVault(vault);
+    function setVault(address v) external onlyRole(HEART_ADMIN_ROLE) {
+        _setVault(v);
     }
 
     /// @inheritdoc ICallistoHeart
-    function setPSMStrategy(address strategy) external onlyRole(HEART_ADMIN_ROLE) {
-        _setPSMStrategy(strategy);
+    function setPSM(address psm_) external onlyRole(HEART_ADMIN_ROLE) {
+        _setPSM(psm_);
     }
 
     function _setFrequency(uint48 freq) private {
@@ -220,16 +223,14 @@ contract CallistoHeart is ICallistoHeart, Policy, RolesConsumer, ReentrancyGuard
         emit FrequencySet(freq);
     }
 
-    function _setCallistoVault(address vault) private {
-        require(vault != address(0), Heart_InvalidParams());
-        callistoVault = IExecutableByHeart(vault);
-        emit CallistoVaultSet(vault);
+    function _setVault(address v) private {
+        vault = IExecutableByHeart(v);
+        emit VaultSet(v);
     }
 
-    function _setPSMStrategy(address strategy) private {
-        require(strategy != address(0), Heart_InvalidParams());
-        psmStrategy = IExecutableByHeart(strategy);
-        emit PSMStrategySet(strategy);
+    function _setPSM(address psm_) private {
+        psm = IExecutableByHeart(psm_);
+        emit PSMSet(psm_);
     }
 
     function _resetBeat() private {

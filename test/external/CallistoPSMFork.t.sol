@@ -3,12 +3,13 @@
 pragma solidity ^0.8.30;
 
 import { CallistoPSM } from "../../src/external/CallistoPSM.sol";
-import { CallistoVaultTestForkBase, SafeCast } from "../test-common/CallistoVaultTestForkBase.sol";
+import { CallistoVaultTestForkCDP } from "../test-common/CallistoVaultTestForkCDP.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-contract CallistoPSMForkTests is CallistoVaultTestForkBase {
+contract CallistoPSMForkTests is CallistoVaultTestForkCDP {
     using SafeCast for *;
 
-    function setUp() public virtual override {
+    function setUp() public override {
         vm.createSelectFork("mainnet", 23_016_996);
         super.setUp();
     }

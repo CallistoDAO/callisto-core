@@ -2,13 +2,16 @@
 
 pragma solidity 0.8.30;
 
-import { AccessControl } from "../../dependencies/@openzeppelin-contracts-5.3.0/access/AccessControl.sol";
+import {
+    AccessControl, IAccessControl
+} from "../../dependencies/@openzeppelin-contracts-5.3.0/access/AccessControl.sol";
 import { IERC20Metadata } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC20Metadata.sol";
 import { IERC20, IERC4626 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { SafeERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
 import { Math } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/Math.sol";
 import { CallistoVault } from "../../src/policies/CallistoVault.sol";
 import { ICOLLAR } from "../interfaces/ICOLLAR.sol";
+import { IExecutableByHeart } from "../interfaces/IExecutableByHeart.sol";
 import { DebtTokenMigrator } from "./DebtTokenMigrator.sol";
 import { PSMStrategy } from "./PSMStrategy.sol";
 import { VaultStrategy } from "./VaultStrategy.sol";
@@ -21,13 +24,15 @@ import { VaultStrategy } from "./VaultStrategy.sol";
  * @dev Initially uses USDS as the asset and sUSDS as the yield vault. The liquidity provider is the Callisto
  * vault's strategy contract. Asset and yield vault can be migrated if Olympus Cooler V2 changes its debt token.
  */
-contract CallistoPSM is AccessControl {
+contract CallistoPSM is AccessControl, IExecutableByHeart {
     using SafeERC20 for IERC20;
     using SafeERC20 for IERC4626;
 
-    // ___ CONSTANTS & IMMUTABLES
-
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+
+    bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
+
+    bytes32 public constant KEEPER_ROLE = keccak256("KEEPER_ROLE");
 
     bytes32 public constant FEE_EXEMPT_ROLE = keccak256("FEE_EXEMPT_ROLE");
 
@@ -37,11 +42,6 @@ contract CallistoPSM is AccessControl {
 
     /// @notice The Callisto stablecoin.
     IERC20 public immutable COLLAR;
-
-    /// @notice The contract address authorized to migrate the debt token.
-    address public debtTokenMigrator;
-
-    // ___ STORAGE
 
     /**
      * @notice The underlying stablecoin (initially USDS).
@@ -71,24 +71,38 @@ contract CallistoPSM is AccessControl {
     /// @notice Total yield vault shares (initially sUSDS) supplied by the liquidity provider.
     uint256 public suppliedByLP;
 
-    /// @notice The COLLAR burning strategy of the PSM.
-    PSMStrategy public psmStrategy;
+    /// @notice The amount of COLLAR which is minted by this contract and should be burned with `swapIn` operations.
+    uint256 public excessCOLLAR;
 
-    // ___ EVENTS
+    /// @notice The amount of COLLAR waiting to be burned using `execute` when it is greater than `minBurningAmount`.
+    uint256 public collarPendingBurning;
 
-    event LiquidityAdded(uint256 shares, uint256 newLPBalance);
+    uint256 public minBurningAmount;
 
-    event LiquidityRemoved(uint256 shares, uint256 newLPBalance);
+    /**
+     * @notice The PSM strategy in which incoming COLLAR is deposited, when there is no `excessCOLLAR`,
+     * to earn a profit for the Callisto treasury.
+     */
+    PSMStrategy public strategy;
 
-    event COLLARBought(address indexed account, uint256 collarOut, uint256 assetsIn, uint256 fee);
+    /// @notice The contract address authorized to migrate the debt token.
+    address public debtTokenMigrator;
 
-    event COLLARSold(address indexed account, uint256 collarIn, uint256 assetsOut, uint256 fee);
+    event LiquidityAdded(uint256 indexed shares, uint256 indexed newLPBalance);
 
-    event FeeInSet(uint256 value);
+    event LiquidityRemoved(uint256 indexed shares, uint256 indexed newLPBalance);
 
-    event FeeOutSet(uint256 value);
+    event COLLARBought(address indexed account, uint256 indexed collarOut, uint256 indexed assetsIn, uint256 fee);
 
-    event LPSet(address lp);
+    event COLLARSold(address indexed account, uint256 indexed collarIn, uint256 indexed assetsOut, uint256 fee);
+
+    event FeeInSet(uint256 indexed value);
+
+    event FeeOutSet(uint256 indexed value);
+
+    event LPSet(address indexed lp);
+
+    event MinBurningAmountSet(uint256 indexed amount);
 
     event AssetMigrated(
         address indexed newAsset,
@@ -105,7 +119,7 @@ contract CallistoPSM is AccessControl {
      */
     event DebtTokenMigratorSet(address indexed oldMigrator, address indexed newMigrator);
 
-    // ___ ERRORS
+    event MigratedToNewStrategy(address indexed oldStrategy, address indexed newStrategy);
 
     error ZeroAmount();
 
@@ -127,10 +141,20 @@ contract CallistoPSM is AccessControl {
 
     error MismatchedCoolerAddress();
 
-    // ___ MODIFIERS
+    error OnlyStrategy();
+
+    error MismatchedDebtTokenAddress();
 
     modifier onlyLP() {
         require(msg.sender == liquidityProvider, OnlyLP());
+        _;
+    }
+
+    modifier onlyAdminOrManager() {
+        require(
+            hasRole(MANAGER_ROLE, msg.sender) || hasRole(ADMIN_ROLE, msg.sender),
+            IAccessControl.AccessControlBadConfirmation()
+        );
         _;
     }
 
@@ -139,15 +163,14 @@ contract CallistoPSM is AccessControl {
         _;
     }
 
-    // ___ INITIALIZATION
-
     /**
-     * @dev Use `setLiquidityProvider` after deployment. Optionally set fees with `setFee`.
+     * @dev Use `finalizeInitialization` after deployment. Optionally set fees with `setFee` and
+     * the minimum COLLAR burning amount with `setMinBurningAmount`.
      */
-    constructor(address defaultAdmin, address asset_, address collar, address yieldVault_, address psmStrategy_) {
+    constructor(address defaultAdmin, address asset_, address collar, address yieldVault_, address psmStrategy) {
         require(
             defaultAdmin != address(0) && asset_ != address(0) && collar != address(0) && yieldVault_ != address(0)
-                && psmStrategy_ != address(0),
+                && psmStrategy != address(0),
             InvalidParameter()
         );
 
@@ -157,17 +180,21 @@ contract CallistoPSM is AccessControl {
         asset = IERC20(asset_);
         to18DecimalsMultiplier = 10 ** (18 - IERC20Metadata(asset_).decimals());
         yieldVault = IERC4626(yieldVault_);
-        psmStrategy = PSMStrategy(psmStrategy_);
+        strategy = PSMStrategy(psmStrategy);
         emit FeeInSet(0);
         emit FeeOutSet(0);
         debtTokenMigrator = address(0);
     }
 
-    // ___ SWAP BETWEEN ASSETS & COLLAR
+    /// @notice Finalizes the contract initialization by setting the liquidity provider.
+    function finalizeInitialization(address lp) external onlyRole(ADMIN_ROLE) {
+        require(liquidityProvider == address(0), AlreadyInitialized());
+        require(lp != address(0), InvalidParameter());
+        liquidityProvider = lp;
+        emit LPSet(lp);
+    }
 
     // Note: COLLAR and the asset swap at a 1:1 ratio.
-
-    // TODO: consider whether we need to add `from` methods.
 
     /// @notice Sells `assets` for COLLAR, mints COLLAR to recipient, and deposits `assets` to yield vault.
     function swapOut(address to, uint256 assets) external returns (uint256) {
@@ -184,7 +211,7 @@ contract CallistoPSM is AccessControl {
 
     /**
      * TODO: add another method to withdraw COLLAR for the CDP's stability pool.
-     * @notice Redeems COLLAR for `assets`, withdraws `assets` from `yieldVault`, and deposits COLLAR to Stability Pool.
+     * @notice Redeems COLLAR for `assets`, withdraws `assets` from `yieldVault`, and deposits COLLAR into the strategy.
      */
     function swapIn(address to, uint256 assets) external returns (uint256) {
         uint256 feeOut_ = feeOut;
@@ -208,12 +235,14 @@ contract CallistoPSM is AccessControl {
         return _calcCOLLARIn(assets, feeOut);
     }
 
+    // TODO: add `fee` receiver, `sweepFee()`.
+
     function _sellAssets(
         address to,
         uint256 assets,
         uint256 fee // Percentage.
     ) private nonzeroAmount(assets) returns (uint256 collarOut) {
-        // Calculate the COLLAR amount to mint.
+        // Calculate the COLLAR amount, including fee, to mint.
         (collarOut, fee) = _calcCOLLAROut(assets, fee);
 
         // Transfer `assets` from the caller.
@@ -228,8 +257,8 @@ contract CallistoPSM is AccessControl {
         yieldVault_.deposit(assets, address(this));
 
         // Mint COLLAR to `to`.
-        // TODO: check whether COLLAR reverts if `to` is the zero address.
         ICOLLAR(address(COLLAR)).mintByPSM(to, collarOut);
+        excessCOLLAR += collarOut;
 
         emit COLLARBought(to, collarOut, assets, fee);
         return collarOut;
@@ -240,13 +269,32 @@ contract CallistoPSM is AccessControl {
         uint256 assets,
         uint256 fee // Percentage.
     ) private nonzeroAmount(assets) returns (uint256 collarIn) {
-        // Calculate the COLLAR amount to transfer from the caller.
+        // Calculate the COLLAR amount, including fee, to transfer from the caller.
         (collarIn, fee) = _calcCOLLARIn(assets, fee);
 
-        PSMStrategy strategy = psmStrategy;
-        // Instead of `approve` to reduce gas consumption.
-        COLLAR.safeTransferFrom(msg.sender, address(strategy), collarIn);
-        strategy.deposit(collarIn);
+        /* Calculate the COLLAR amount to be deposited into the strategy and
+         * the amount to be burned if excess COLLAR exists.
+         */
+        uint256 collarToStrategy = 0;
+        uint256 excess = excessCOLLAR - collarPendingBurning;
+        if (excess < collarIn) {
+            collarToStrategy = collarIn - excess;
+            if (excess != 0) collarPendingBurning += excess;
+        } else {
+            // collarToStrategy = 0;
+            collarPendingBurning += collarIn;
+        }
+
+        // Transfer `collarIn` from the caller.
+        COLLAR.safeTransferFrom(msg.sender, address(this), collarIn);
+
+        // Transfer COLLAR to the strategy if no excess COLLAR.
+        if (collarToStrategy != 0) {
+            PSMStrategy strategy_ = strategy;
+            // Instead of `approve` to reduce gas consumption.
+            COLLAR.safeTransfer(address(strategy_), collarToStrategy);
+            strategy_.deposit(collarToStrategy);
+        }
 
         // Withdraw `assets` and transfer to `to`.
         // slither-disable-next-line unused-return
@@ -277,8 +325,6 @@ contract CallistoPSM is AccessControl {
         return (collarIn, fee);
     }
 
-    // ___ LIQUIDITY PROVIDER FUNCTIONS TO TRACK THE TOTAL SUPPLY
-
     /// @notice Supplies `yieldVault` shares as liquidity (LP only).
     function addLiquidity(uint256 shares) external onlyLP {
         suppliedByLP += shares;
@@ -300,11 +346,46 @@ contract CallistoPSM is AccessControl {
         return shares;
     }
 
-    /* TODO: ensure that the LP does not need a method for withdrawing shares in excess of the liquidity provided
-     * in some cases.
+    /**
+     * @inheritdoc IExecutableByHeart
+     * @notice Burns excess COLLAR, as far as possible.
      */
+    function execute() external override onlyRole(KEEPER_ROLE) {
+        burnExcessCOLLAR();
+    }
 
-    // ___ ADMINISTRATIVE FUNCTIONS ___
+    function burnExcessCOLLAR() public {
+        uint256 excess = excessCOLLAR;
+        if (excess < minBurningAmount) return;
+
+        bool burned = false;
+
+        // Burn excess COLLAR, as far as possible.
+        // Burn all COLLAR pending burning in the PSM.
+        uint256 toBurn = collarPendingBurning;
+        if (toBurn != 0) {
+            burned = true;
+            excess -= toBurn;
+            delete collarPendingBurning;
+            ICOLLAR(address(COLLAR)).burn(address(this), toBurn);
+        }
+        /* If excess remains, check burnable COLLAR in the strategy and
+         * burn as much as necessary, or everything available.
+         */
+        if (excess != 0) {
+            PSMStrategy strategy_ = strategy;
+            toBurn = strategy_.burnableCOLLAR(); // Burnable.
+            if (toBurn != 0) {
+                burned = true;
+                if (excess <= toBurn) toBurn = excess; // Burn only the excess amount.
+                excess -= toBurn;
+                strategy_.burnCOLLAR(toBurn);
+            }
+        }
+
+        // Update `excessCOLLAR` if any amount is burned.
+        if (burned) excessCOLLAR = excess;
+    }
 
     /// @notice Adds or removes fee exemption for an account.
     function setFeeExempt(address account, bool add) external onlyRole(ADMIN_ROLE) {
@@ -327,12 +408,9 @@ contract CallistoPSM is AccessControl {
         }
     }
 
-    /// @notice Sets the liquidity provider address (admin only).
-    function setLP(address lp) external onlyRole(ADMIN_ROLE) {
-        require(liquidityProvider == address(0), AlreadyInitialized());
-        require(lp != address(0), InvalidParameter());
-        liquidityProvider = lp;
-        emit LPSet(lp);
+    function setMinBurningAmount(uint256 collarAmount) external onlyAdminOrManager {
+        minBurningAmount = collarAmount;
+        emit MinBurningAmountSet(collarAmount);
     }
 
     /// @notice Sets the debt token migrator address (admin only).
@@ -350,14 +428,19 @@ contract CallistoPSM is AccessControl {
         emit DebtTokenMigratorSet(oldMigrator, newMigrator);
     }
 
-    /// @notice Transfers unexpected tokens (not managed by PSM) to a recipient (callable by admin only).
-    function transferUnexpectedTokens(address token, address to, uint256 value) external onlyRole(ADMIN_ROLE) {
-        if (token != address(yieldVault) && token != address(COLLAR)) {
+    /// @notice Transfers `value` of tokens, transferred directly to the PSM, to `to`.
+    function transferUnexpectedTokens(address token, address to, uint256 value) external onlyAdminOrManager {
+        if (token == address(yieldVault)) return;
+
+        if (token != address(COLLAR)) {
             IERC20(token).safeTransfer(to, value);
+        } else {
+            IERC20 collar = IERC20(token);
+            if (collar.balanceOf(address(this)) - collarPendingBurning >= value) {
+                collar.safeTransfer(to, value);
+            }
         }
     }
-
-    // ___ ASSET MIGRATION LOGIC ___
 
     /**
      * @notice Migrates to a `newAsset` and `yieldVault`. Only callable by the debt token migrator.
@@ -382,7 +465,8 @@ contract CallistoPSM is AccessControl {
             newAsset
                 == address(
                     CallistoVault(VaultStrategy(liquidityProvider).vault()).OLYMPUS_COOLER().treasuryBorrower().debtToken()
-                )
+                ),
+            MismatchedDebtTokenAddress()
         );
 
         IERC20 asset_ = asset;
@@ -399,11 +483,11 @@ contract CallistoPSM is AccessControl {
         emit AssetMigrated(newAsset, newYieldVault, receiver, assets, suppliedByLPConverted);
     }
 
-    // ___ PSM STRATEGY MIGRATION ___
+    function migrateToNewStrategy(address newStrategy) external {
+        address oldStrategy = address(strategy);
+        require(msg.sender == oldStrategy, OnlyStrategy());
 
-    // TODO: ! correct before deploying to the main network.
-
-    function testSetPSMStrategy(PSMStrategy strategy) external {
-        psmStrategy = strategy;
+        strategy = PSMStrategy(newStrategy);
+        emit MigratedToNewStrategy(oldStrategy, newStrategy);
     }
 }

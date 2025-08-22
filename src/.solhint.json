@@ -17,6 +17,10 @@
     "one-contract-per-file": "off",
     "quotes": ["warn", "double"],
     "reason-string": "off",
-    "var-name-mixedcase": "off"
+    "var-name-mixedcase": "off",
+    "max-states-count": ["warn", 16],
+    "use-natspec": "off",
+    "gas-strict-inequalities": "off",
+    "function-max-lines": "off"
   }
 }

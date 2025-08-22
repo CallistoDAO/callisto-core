@@ -22,6 +22,7 @@ import { TRSRYv1 } from "../modules/TRSRY/CallistoTreasury.sol";
 import { IERC20 } from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import { IERC20Metadata } from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import { ERC20Permit } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import { ERC4626 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ReentrancyGuardTransient } from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -43,6 +44,7 @@ contract CallistoVault is
     Policy,
     RolesConsumer,
     ERC4626,
+    ERC20Permit,
     ReentrancyGuardTransient,
     ICallistoVault,
     IExecutableByHeart
@@ -51,23 +53,10 @@ contract CallistoVault is
     using SafeCast for *;
     using SafeERC20 for IERC20;
 
-    // ========== CONSTANTS ========== //
-
     bytes32 public constant CDP_ROLE = "cdp";
     bytes32 public constant HEART_ROLE = "heart";
 
     uint256 private constant _TO_18_DECIMALS_FACTOR = 1e9;
-
-    struct InitialParameters {
-        address asset;
-        address olympusStaking;
-        address olympusCooler;
-        address strategy;
-        address debtConverterToWad;
-        uint256 minDeposit;
-    }
-
-    // ========== IMMUTABLES ========== //
 
     IGOHM public immutable GOHM;
 
@@ -85,11 +74,6 @@ contract CallistoVault is
 
     VaultStrategy public immutable STRATEGY;
 
-    /// @notice The contract address authorized to migrate the debt token.
-    address public debtTokenMigrator;
-
-    // ========== STORAGE ========== //
-
     /// @notice The Callisto treasury.
     address public TRSRY;
 
@@ -99,7 +83,7 @@ contract CallistoVault is
     IERC20 public debtToken;
 
     /// @dev Converter from wad to debt token decimals for borrowing operations.
-    ICoolerTreasuryBorrower private debtConverterFromWad;
+    ICoolerTreasuryBorrower private _debtConverterFromWad;
 
     /// @dev Converter from debt token decimals to wad for repayment calculations.
     IConverterToWadDebt public debtConverterToWad;
@@ -118,6 +102,8 @@ contract CallistoVault is
 
     ICallistoVault.OHMToGOHMMode public ohmToGOHMMode;
 
+    uint256 public totalReimbursementClaim;
+
     /**
      * @notice A reimbursement claim for `account` in wad terms of Olympus for `debtToken`.
      *
@@ -134,7 +120,8 @@ contract CallistoVault is
 
     bool public withdrawalPaused;
 
-    // ========== MODIFIERS ========== //
+    /// @notice The contract address authorized to migrate the debt token.
+    address public debtTokenMigrator;
 
     modifier onlyAdminOrManager() {
         ROLESv1 roles = ROLES;
@@ -153,6 +140,15 @@ contract CallistoVault is
     modifier whenWithdrawalNotPaused() {
         require(!withdrawalPaused, WithdrawalsPaused());
         _;
+    }
+
+    struct InitialParameters {
+        address asset;
+        address olympusStaking;
+        address olympusCooler;
+        address strategy;
+        address debtConverterToWad;
+        uint256 minDeposit;
     }
 
     /**
@@ -178,7 +174,8 @@ contract CallistoVault is
     constructor(Kernel kernel, InitialParameters memory p)
         Policy(kernel)
         ERC20("Callisto OHM", "cOHM")
-        ERC4626(IERC20Metadata(p.asset))
+        ERC20Permit("Callisto OHM")
+        ERC4626(IERC20(p.asset))
     {
         _requireNonzeroAddress(address(kernel));
         require(IERC20Metadata(p.asset).decimals() == 9, OHMExpected());
@@ -200,12 +197,12 @@ contract CallistoVault is
         _GOHM_PRECISION = uint128(10 ** GOHM.decimals());
         OLYMPUS_STAKING = IOlympusStaking(p.olympusStaking);
         debtTokenMigrator = address(0);
-        debtToken = debtToken_;
         _updateDebtTokenConfiguration(debtTokenAddr, p.debtConverterToWad);
         _setOHMExchangeMode(ICallistoVault.OHMToGOHMMode.ZeroWarmup, address(0));
 
         // Sets the permanent allowance of the vault strategy over this vault's debt tokens borrowed from
         // Olympus Cooler V2.
+        // slither-disable-next-line unused-return
         debtToken_.approve(p.strategy, type(uint256).max);
     }
 
@@ -247,8 +244,6 @@ contract CallistoVault is
      */
     function requestPermissions() external pure override returns (Permissions[] memory) { }
 
-    // ========== RESTRICTED FUNCTIONALITY ========== //
-
     /// @inheritdoc ICallistoVault
     function execute() external override(ICallistoVault, IExecutableByHeart) onlyRole(HEART_ROLE) {
         uint256 ohmAmount = pendingOHMDeposits;
@@ -262,6 +257,7 @@ contract CallistoVault is
     /// @inheritdoc ICallistoVault
     function applyDelegations(IDLGTEv1.DelegationRequest[] calldata requests)
         external
+        override
         returns (uint256 totalDelegated, uint256 totalUndelegated, uint256 undelegatedBalance)
     {
         ROLESv1 roles = ROLES;
@@ -273,8 +269,8 @@ contract CallistoVault is
     }
 
     /// @inheritdoc ICallistoVault
-    function sweepProfit(uint256 amount) external nonzeroValue(amount) onlyAdminOrManager {
-        uint256 totalProfit_ = _totalProfit(STRATEGY);
+    function sweepProfit(uint256 amount) external override nonzeroValue(amount) onlyAdminOrManager {
+        uint256 totalProfit_ = totalProfit();
 
         if (amount == type(uint256).max) amount = totalProfit_;
         else if (amount > totalProfit_) revert ProfitWithdrawalExceedsTotalProfit(totalProfit_);
@@ -285,13 +281,14 @@ contract CallistoVault is
     }
 
     /// @inheritdoc ICallistoVault
-    function withdrawExcessGOHM(uint256 gOHMAmount, address to) external onlyAdminOrManager {
-        // Calculate excess GOHM.
-        uint256 excessGOHM_ = _excessGOHM({ requiresExcess: true });
+    function withdrawExcessGOHM(uint256 gOHMAmount, address to) external override onlyAdminOrManager {
+        // Calculate and require excess GOHM.
+        uint256 excessGOHM_ = excessGOHM();
+        require(excessGOHM_ != 0, NoExcessGOHM());
         if (gOHMAmount > excessGOHM_) revert NotEnoughGOHM(gOHMAmount - excessGOHM_);
 
         // Calculate the debt amount required to repay a debt in `OLYMPUS_COOLER` to withdraw `gOHMAmount`.
-        (uint128 wadDebtToRepay, uint256 debtToRepay) = _calcDebtToRepay(OLYMPUS_COOLER, gOHMAmount);
+        (uint128 wadDebtToRepay, uint256 debtToRepay) = _calcDebtToRepay(gOHMAmount);
 
         if (debtToRepay != 0) {
             /* If `_processPendingDeposits` is called before this function, then the borrowed amount in
@@ -323,7 +320,7 @@ contract CallistoVault is
     /// @inheritdoc ICallistoVault
     function cancelOHMStake() external override onlyAdminOrManager {
         uint256 stakedAmount = pendingOHMWarmupStaking;
-        require(pendingOHMWarmupStaking != 0, ZeroValue());
+        require(stakedAmount != 0, ZeroValue());
         _deletePendingOHMWarmupStaking(stakedAmount);
         uint256 ohmAmount = OLYMPUS_STAKING.forfeit();
         pendingOHMDeposits += ohmAmount;
@@ -398,13 +395,13 @@ contract CallistoVault is
         require(pendingOHMWarmupStaking == 0, PendingWarmupStakingExists());
     }
 
-    function _requireZeroWarmupPeriod(IOlympusStaking ostaking) private view {
-        uint256 period = ostaking.warmupPeriod();
+    function _requireZeroWarmupPeriod() private view {
+        uint256 period = OLYMPUS_STAKING.warmupPeriod();
         require(period == 0, InvalidWarmupPeriod(period));
     }
 
-    function _requireNonZeroWarmupPeriod(IOlympusStaking ostaking) private view {
-        uint256 period = ostaking.warmupPeriod();
+    function _requireNonZeroWarmupPeriod() private view {
+        uint256 period = OLYMPUS_STAKING.warmupPeriod();
         require(period != 0, InvalidWarmupPeriod(period));
     }
 
@@ -417,7 +414,7 @@ contract CallistoVault is
     /// @inheritdoc ICallistoVault
     function setZeroWarmupMode() external override onlyRole(CommonRoles.ADMIN) {
         _requireModeChange(ICallistoVault.OHMToGOHMMode.ZeroWarmup);
-        _requireZeroWarmupPeriod(OLYMPUS_STAKING);
+        _requireZeroWarmupPeriod();
         _requireNoPendingWarmupStaking();
         _setOHMExchangeMode(ICallistoVault.OHMToGOHMMode.ZeroWarmup, address(0));
     }
@@ -425,6 +422,7 @@ contract CallistoVault is
     /// @inheritdoc ICallistoVault
     function setActiveWarmupMode() external override onlyRole(CommonRoles.ADMIN) {
         _requireModeChange(ICallistoVault.OHMToGOHMMode.ActiveWarmup);
+        _requireNonZeroWarmupPeriod();
         _setOHMExchangeMode(ICallistoVault.OHMToGOHMMode.ActiveWarmup, address(0));
     }
 
@@ -435,12 +433,10 @@ contract CallistoVault is
             ICallistoVault.OHMToGOHMMode.Swap != ohmToGOHMMode || swapper != address(ohmSwapper),
             OHMToGOHMModeUnchanged()
         );
-        _requireNonZeroWarmupPeriod(OLYMPUS_STAKING);
+        _requireNonZeroWarmupPeriod();
         _requireNoPendingWarmupStaking();
         _setOHMExchangeMode(ICallistoVault.OHMToGOHMMode.Swap, swapper);
     }
-
-    // ========== DEPOSIT & WITHDRAWAL ========== //
 
     // Note. The asset-to-share ratio is 1-to-1. The asset has 9 decimals, shares have 18 decimals.
 
@@ -495,19 +491,18 @@ contract CallistoVault is
         nonzeroValue(shares)
         returns (uint256 debtAmount)
     {
-        VaultStrategy strategy = STRATEGY;
         uint256 debtTokensDeposited = STRATEGY.totalAssetsInvested();
-        if (_isVaultPositionLiquidated(debtTokensDeposited, OLYMPUS_COOLER.accountCollateral(address(this)))) {
+        if (_isVaultPositionLiquidated(debtTokensDeposited)) {
             /* In an emergency where the vault's position has been liquidated in Olympus Cooler V2 and there are
              * funds in the strategy.
              */
             // Amount to redeem = cOHM amount * Total funds in the strategy / Total cOHM.
-            // TODO: test the formular is right
             debtAmount = Math.mulDiv(shares, debtTokensDeposited, totalSupply());
             _burn(msg.sender, shares);
-            strategy.divest(debtAmount, msg.sender);
+            STRATEGY.divest(debtAmount, msg.sender);
             emit EmergencyRedeemed(msg.sender, debtAmount);
         }
+        return debtAmount;
     }
 
     /* Deposits `assets` of OHM into the vault, minting corresponding amount of cOHM (shares).
@@ -563,12 +558,14 @@ contract CallistoVault is
         nonzeroValue(assets)
     {
         _totalAssets -= assets;
+
         // 0.1 Check if sufficient OHM exists in pending deposits for direct withdrawal
         // This avoids the complex strategy withdrawal and debt repayment process
         uint256 ohmBalance = pendingOHMDeposits;
         if (assets <= ohmBalance) {
-            pendingOHMDeposits = FixedPointMathLib.rawSub(ohmBalance, assets);
-            emit PendingOHMDepositsChanged(-int256(assets), pendingOHMDeposits);
+            uint256 newPending = FixedPointMathLib.rawSub(ohmBalance, assets);
+            pendingOHMDeposits = newPending;
+            emit PendingOHMDepositsChanged(-int256(assets), newPending);
             // Transfers `assets` of OHM to `receiver` and burns `shares` of cOHM from `owner`.
             super._withdraw(caller, receiver, owner, assets, shares);
             return;
@@ -619,16 +616,14 @@ contract CallistoVault is
              * If not enough gOHM in the vault, revert.
              */
             uint256 shortfall = FixedPointMathLib.rawSub(gOHMAmountRequired, totalCollateral);
-            if (GOHM.balanceOf(address(this)) < shortfall) {
-                revert NotEnoughGOHM(shortfall);
-            }
+            require(GOHM.balanceOf(address(this)) >= shortfall, NotEnoughGOHM(shortfall));
             gOHMAmountToWithdraw = totalCollateral;
         }
 
         /* 1. 3. Calculate the debt amount required to repay a debt in `OLYMPUS_COOLER` to withdraw
          * `gOHMAmountToWithdraw`.
          */
-        (uint128 wadDebt, uint256 debtToRepay) = _calcDebtToRepay(OLYMPUS_COOLER, gOHMAmountToWithdraw);
+        (uint128 wadDebt, uint256 debtToRepay) = _calcDebtToRepay(gOHMAmountToWithdraw);
 
         /* 2. Withdraw the required amount of `debtToken` from the strategy to repay the debt.
          *
@@ -662,12 +657,10 @@ contract CallistoVault is
         });
 
         // 4. Exchange gOHM for OHM. (Note. Olympus Staking does not have a warm-up period for OHM redemption).
-        IOlympusStaking ostaking = OLYMPUS_STAKING;
         // slither-disable-next-line unused-return
-        GOHM.approve(address(ostaking), gOHMAmountRequired);
-        // TODO: consider whether to trigger a bounty and handle it if the staking has a distributor.
+        GOHM.approve(address(OLYMPUS_STAKING), gOHMAmountRequired);
         // slither-disable-next-line unused-return
-        ostaking.unstake({ to: address(this), amount: gOHMAmountRequired, trigger: false, rebasing: false });
+        OLYMPUS_STAKING.unstake({ to: address(this), amount: gOHMAmountRequired, trigger: false, rebasing: false });
 
         // 5. Transfer `assets` of OHM to `receiver` and burn `shares` of cOHM from `owner`.
         super._withdraw(caller, receiver, owner, assets, shares);
@@ -678,24 +671,24 @@ contract CallistoVault is
      */
     function _withdrawStrategyOrCallerFunds(uint256 debtToRepay, IERC20 debtToken_) private {
         // Get the total amount available in the strategy.
-        VaultStrategy strategy = STRATEGY;
-        uint256 strategyBalance = strategy.totalAssetsAvailable();
+        uint256 strategyBalance = STRATEGY.totalAssetsAvailable();
 
         // If the strategy covers the entire debt, withdraw the required amount of `debtToken`.
         if (debtToRepay <= strategyBalance) {
-            strategy.divest(debtToRepay, address(this));
+            STRATEGY.divest(debtToRepay, address(this));
             return;
         }
 
         // Otherwise, the caller pays the difference, and a reimbursement is recorded for them.
         uint256 callerContribution = FixedPointMathLib.rawSub(debtToRepay, strategyBalance);
-        if (callerContribution != 0) debtToken_.safeTransferFrom(msg.sender, address(this), callerContribution);
+        debtToken_.safeTransferFrom(msg.sender, address(this), callerContribution);
         uint256 reimbursementClaim = debtConverterToWad.toWad(callerContribution);
         reimbursementClaims[msg.sender] += reimbursementClaim;
         emit ReimbursementClaimAdded(msg.sender, reimbursementClaim, callerContribution);
+        totalReimbursementClaim += reimbursementClaim;
 
         // Withdraw the available amount of `debtToken` from the strategy.
-        if (strategyBalance != 0) strategy.divest(strategyBalance, address(this));
+        if (strategyBalance != 0) STRATEGY.divest(strategyBalance, address(this));
     }
 
     /**
@@ -727,12 +720,10 @@ contract CallistoVault is
         return base + SafeCast.toUint(hasRemainder);
     }
 
-    // ========== COOLER LOAN REPAYMENT ========== //
-
     /// @inheritdoc ICallistoVault
     function repayCoolerDebt(uint256 amount) external override {
         // Calculate the amount required to repay a debt in `OLYMPUS_COOLER` to return to the origination LTV.
-        (uint128 wadDebtToRepay, uint256 debtToRepay) = _calcDebtToRepay(OLYMPUS_COOLER, 0);
+        (uint128 wadDebtToRepay, uint256 debtToRepay) = _calcDebtToRepay(0);
         if (debtToRepay == 0) return;
 
         if (amount != 0) {
@@ -765,15 +756,14 @@ contract CallistoVault is
      * @param cachedClaim The cache of claim amount
      */
     function _claimReimbursement(address account, uint256 debt, uint256 cachedClaim) private {
-        VaultStrategy strategy = STRATEGY;
-        uint256 strategyBalance = strategy.totalAssetsAvailable();
+        uint256 strategyBalance = STRATEGY.totalAssetsAvailable();
         if (debt <= strategyBalance) {
             // If enough debt tokens in the strategy to reimburse.
-            strategy.divest(debt, account);
+            STRATEGY.divest(debt, account);
         } else {
             // If not enough debt tokens in the strategy.
             debtToken.safeTransfer(account, FixedPointMathLib.rawSub(debt, strategyBalance));
-            if (strategyBalance != 0) strategy.divest(strategyBalance, account);
+            if (strategyBalance != 0) STRATEGY.divest(strategyBalance, account);
         }
 
         // Convert amount to wad and subtract from reimbursement claims
@@ -782,17 +772,23 @@ contract CallistoVault is
         if (amountInWad >= cachedClaim) {
             // If the amount in wad is equal or greater than remaining claims, clear the claim
             reimbursementClaims[account] = 0;
-            emit ReimbursementClaimSubstructed(account, cachedClaim, debt);
+            emit ReimbursementClaimRemoved(account, cachedClaim, debt);
+            unchecked {
+                totalReimbursementClaim -= cachedClaim;
+            }
         } else {
             reimbursementClaims[account] -= amountInWad;
-            emit ReimbursementClaimSubstructed(account, amountInWad, debt);
+            emit ReimbursementClaimRemoved(account, amountInWad, debt);
+            unchecked {
+                totalReimbursementClaim -= amountInWad;
+            }
         }
     }
 
     /// @inheritdoc ICallistoVault
     function claimReimbursement(address account) external override {
         uint256 cachedClaim = reimbursementClaims[account];
-        (, uint256 debt) = debtConverterFromWad.convertToDebtTokenAmount(cachedClaim);
+        (, uint256 debt) = _debtConverterFromWad.convertToDebtTokenAmount(cachedClaim);
         require(debt != 0, NoReimbursementFor(account));
 
         _claimReimbursement(account, debt, cachedClaim);
@@ -801,74 +797,68 @@ contract CallistoVault is
     /// @inheritdoc ICallistoVault
     function claimReimbursementPartial(address account, uint256 partialAmount) external override {
         uint256 cachedClaim = reimbursementClaims[account];
-        (, uint256 totalDebt) = debtConverterFromWad.convertToDebtTokenAmount(cachedClaim);
+        (, uint256 totalDebt) = _debtConverterFromWad.convertToDebtTokenAmount(cachedClaim);
         require(partialAmount <= totalDebt, PartialAmountExceedsAvailableClaim(partialAmount, totalDebt));
 
         _claimReimbursement(account, partialAmount, cachedClaim);
     }
 
-    // ========== VIEW FUNCTIONS ========== //
-
-    /// @inheritdoc ICallistoVault
-    function totalProfit() external view override returns (uint256) {
-        return _totalProfit(STRATEGY);
-    }
-
-    /// @inheritdoc ICallistoVault
-    function excessGOHM() external view override returns (uint256) {
-        return _excessGOHM({ requiresExcess: false });
-    }
-
     /// @inheritdoc ICallistoVault
     function calcDebtToRepay() external view override returns (uint128 wadDebt, uint256 debtAmount) {
-        return _calcDebtToRepay(OLYMPUS_COOLER, 0);
+        return _calcDebtToRepay(0);
     }
 
     // Returns the debt amount required to be repaid in `OLYMPUS_COOLER` to withdraw `gOHMAmount`.
-    function _calcDebtToRepay(IMonoCooler ocooler, uint256 gOHMAmount) private view returns (uint128, uint256) {
-        int128 debtDelta = ocooler.debtDeltaForMaxOriginationLtv({
+    function _calcDebtToRepay(uint256 gOHMAmount) private view returns (uint128, uint256) {
+        int128 debtDelta = OLYMPUS_COOLER.debtDeltaForMaxOriginationLtv({
             account: address(this),
             collateralDelta: -(gOHMAmount.toInt256().toInt128())
         });
         if (debtDelta >= 0) return (0, 0);
         uint128 wadDebt = uint128(-debtDelta);
-        (, uint256 debt) = debtConverterFromWad.convertToDebtTokenAmount(wadDebt);
+        (, uint256 debt) = _debtConverterFromWad.convertToDebtTokenAmount(wadDebt);
         return (wadDebt, debt);
     }
 
-    // Total profit = Strategy funds - Vault's debt to Olympus Cooler V2. If vault is liquidated, profit is 0.
-    function _totalProfit(VaultStrategy strategy) private view returns (uint256) {
-        uint256 totalDeposited = strategy.totalAssetsInvested();
-        uint128 debt = OLYMPUS_COOLER.accountDebt(address(this));
-        if (_isVaultPositionLiquidated(totalDeposited, OLYMPUS_COOLER.accountCollateral(address(this)))) return 0;
+    /// @inheritdoc ICallistoVault
+    function totalProfit() public view override returns (uint256) {
+        /* Total profit = Strategy funds - Vault's debt to Olympus Cooler V2 - Total reimbursment to users.
+         * If the vault is liquidated, profit is 0.
+         */
+        uint256 totalDeposited = STRATEGY.totalAssetsInvested();
+        uint256 totalReimbursement = totalReimbursementClaim;
+        if (totalDeposited < totalReimbursement) return 0;
+        if (_isVaultPositionLiquidated(totalDeposited)) return 0;
+
+        (, uint256 debt) = _debtConverterFromWad.convertToDebtTokenAmount(OLYMPUS_COOLER.accountDebt(address(this)));
+        unchecked {
+            totalDeposited -= totalReimbursement;
+        }
         return totalDeposited < debt ? 0 : FixedPointMathLib.rawSub(totalDeposited, debt);
     }
 
-    function _excessGOHM(bool requiresExcess) private view returns (uint256) {
+    /// @inheritdoc ICallistoVault
+    function excessGOHM() public view override returns (uint256) {
         uint256 gOHMIndex = GOHM.index();
-        uint256 gOHMPrecision = _GOHM_PRECISION;
         /* Total OHM that can be obtained for all available GOHM = gOHM.balanceFrom( Total GOHM ).
          *
          * Not use `gOHM.balanceFrom()` to optimize gas.
          */
         uint256 collateral = OLYMPUS_COOLER.accountCollateral(address(this));
-        uint256 ohmAvailable = collateral * gOHMIndex / gOHMPrecision;
+        uint256 ohmAvailable = collateral * gOHMIndex / _GOHM_PRECISION;
         uint256 ohmRequired = totalAssets();
-        if (ohmAvailable <= ohmRequired) {
-            if (requiresExcess) revert NoExcessGOHM();
-            return 0;
-        }
+        if (ohmAvailable <= ohmRequired) return 0;
 
         // Convert the excess OHM amount back to gOHM to determine how much gOHM can be withdrawn.
         // This is equivalent to gOHM.balanceTo(ohmAvailable - ohmRequired) but optimized for gas.
         // Formula: excessOHM * gOHMPrecision / gOHMIndex
         // Reference: https://github.com/OlympusDAO/olympus-contracts/blob/main/contracts/governance/gOHM.sol#L125
         uint256 excessOHM = FixedPointMathLib.rawSub(ohmAvailable, ohmRequired);
-        return excessOHM * gOHMPrecision / gOHMIndex;
+        return excessOHM * _GOHM_PRECISION / gOHMIndex;
     }
 
     // Returns `true` in an emergency where the vault's position has been liquidated in Olympus Cooler Loans V2.
-    function _isVaultPositionLiquidated(uint256 totalDeposited, uint256 gOHMCollateral) private pure returns (bool) {
+    function _isVaultPositionLiquidated(uint256 totalDeposited) private view returns (bool) {
         /* The condition `totalDeposited > 1` is used instead of `!= 0` because, in an extremely rare case,
          * 1 token unit may remain on the strategy's balance after withdrawing all OHM deposits.
          * When migrating to a debt token with lower decimals, the division rounds up to ensure
@@ -878,24 +868,26 @@ contract CallistoVault is
          * The minimum debt requirement of Olympus Cooler Loans V2 should prevent passing this condition when
          * not liquidated.
          */
-        return totalDeposited > 1 && gOHMCollateral == 0;
+        return totalDeposited > 1 && OLYMPUS_COOLER.accountCollateral(address(this)) == 0;
     }
 
     function _validateAndUpdatePendingDeposits(uint256 ohmAmount) private {
-        if (ohmAmount > pendingOHMDeposits) {
-            revert AmountGreaterThanPendingOHMDeposits(ohmAmount, pendingOHMDeposits);
-        }
+        uint256 pendingOHM = pendingOHMDeposits;
+        require(ohmAmount <= pendingOHM, AmountGreaterThanPendingOHMDeposits(ohmAmount, pendingOHM));
 
         unchecked {
-            pendingOHMDeposits -= ohmAmount;
+            pendingOHM -= ohmAmount;
         }
-        emit PendingOHMDepositsChanged(-int256(ohmAmount), pendingOHMDeposits);
+        pendingOHMDeposits = pendingOHM;
+        emit PendingOHMDepositsChanged(-int256(ohmAmount), pendingOHM);
     }
 
-    // ========== DEPOSIT PROCESSING ========== //
-
     /// @inheritdoc ICallistoVault
-    function processPendingDeposits(uint256 ohmAmount, bytes[] memory swapperData) external nonzeroValue(ohmAmount) {
+    function processPendingDeposits(uint256 ohmAmount, bytes[] calldata swapperData)
+        external
+        override
+        nonzeroValue(ohmAmount)
+    {
         _processPendingDeposits(ohmAmount, ohmToGOHMMode, swapperData);
     }
 
@@ -910,7 +902,7 @@ contract CallistoVault is
     function _processPendingDeposits(
         uint256 ohmAmount,
         ICallistoVault.OHMToGOHMMode exchangeMode,
-        bytes[] memory swapperData
+        bytes[] calldata swapperData
     ) private {
         // 1. Exchange OHM for gOHM.
         if (exchangeMode == ICallistoVault.OHMToGOHMMode.ZeroWarmup) {
@@ -926,7 +918,8 @@ contract CallistoVault is
             _handleDepositsToStrategy(gOHMAmount, ohmAmount);
         } else {
             // If `exchangeMode == OHMToGOHMMode.ActiveWarmup`.
-            if (pendingOHMWarmupStaking == 0) {
+            uint256 stakedAmount = pendingOHMWarmupStaking;
+            if (stakedAmount == 0) {
                 _validateAndUpdatePendingDeposits(ohmAmount);
                 pendingOHMWarmupStaking += ohmAmount;
                 emit PendingOHMWarmupStakingChanged(int256(ohmAmount));
@@ -936,11 +929,10 @@ contract CallistoVault is
                 OLYMPUS_STAKING.stake({ to: address(this), amount: ohmAmount, rebasing: false, claim: false });
                 // `_processPendingDeposits` should be called again after the warm-up period has elapsed.
             } else {
-                ohmAmount = pendingOHMWarmupStaking;
-                _deletePendingOHMWarmupStaking(ohmAmount);
+                _deletePendingOHMWarmupStaking(stakedAmount);
                 uint256 gOHMAmount = OLYMPUS_STAKING.claim({ to: address(this), rebasing: false });
                 require(gOHMAmount != 0, ZeroValue());
-                _handleDepositsToStrategy(gOHMAmount, ohmAmount);
+                _handleDepositsToStrategy(gOHMAmount, stakedAmount);
             }
         }
     }
@@ -948,7 +940,7 @@ contract CallistoVault is
     function _processPendingDepositsZeroWarmup(uint256 ohmAmount) private {
         _validateAndUpdatePendingDeposits(ohmAmount);
 
-        _requireZeroWarmupPeriod(OLYMPUS_STAKING);
+        _requireZeroWarmupPeriod();
 
         // Deposit `ohmAmount` of pending OHM (assets) to `OLYMPUS_STAKING` to get gOHM.
         // slither-disable-next-line unused-return
@@ -985,8 +977,6 @@ contract CallistoVault is
         emit DepositsHandled(ohmAmount);
     }
 
-    // ========== DEBT TOKEN MIGRATION ========== //
-
     /**
      * @dev Updates the debt token configuration and emits the corresponding event.
      * @param newDebtToken The address of the new debt token
@@ -994,10 +984,11 @@ contract CallistoVault is
      */
     function _updateDebtTokenConfiguration(address newDebtToken, address newConverterToWadDebt) private {
         debtToken = IERC20(newDebtToken);
-        debtConverterFromWad = OLYMPUS_COOLER.treasuryBorrower();
+        ICoolerTreasuryBorrower newDebtConverterFromWad = OLYMPUS_COOLER.treasuryBorrower();
+        _debtConverterFromWad = newDebtConverterFromWad;
         debtConverterToWad = IConverterToWadDebt(newConverterToWadDebt);
 
-        emit DebtTokenUpdated(newDebtToken, address(debtConverterFromWad), address(debtConverterToWad));
+        emit DebtTokenUpdated(newDebtToken, address(newDebtConverterFromWad), address(newConverterToWadDebt));
     }
 
     function migrateDebtToken(address newDebtToken, address newConverterToWadDebt) external {
@@ -1005,12 +996,14 @@ contract CallistoVault is
         require(msg.sender == migrator, OnlyDebtTokenMigrator(migrator));
         require(newDebtToken == address(OLYMPUS_COOLER.treasuryBorrower().debtToken()), MismatchedDebtTokenAddress());
 
+        // slither-disable-next-line unused-return
         debtToken.approve(address(STRATEGY), 0);
         _updateDebtTokenConfiguration(newDebtToken, newConverterToWadDebt);
 
         /* Set the permanent allowance of the vault strategy over this vault's debt tokens borrowed from
          * Olympus Cooler V2.
          */
+        // slither-disable-next-line unused-return
         IERC20(newDebtToken).approve(address(STRATEGY), type(uint256).max);
     }
 
@@ -1032,5 +1025,9 @@ contract CallistoVault is
 
     function _decimalsOffset() internal view virtual override returns (uint8) {
         return 9;
+    }
+
+    function decimals() public view virtual override(ERC20, ERC4626) returns (uint8) {
+        return ERC4626.decimals();
     }
 }

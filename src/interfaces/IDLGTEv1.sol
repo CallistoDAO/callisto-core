@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.15;
+pragma solidity ^0.8.30;
 
 import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
@@ -24,9 +24,9 @@ interface IDLGTEv1 {
 
     // ========= EVENTS ========= //
 
-    event DelegationApplied(address indexed account, address indexed delegate, int256 amount);
+    event DelegationApplied(address indexed account, address indexed delegate, int256 indexed amount);
 
-    event MaxDelegateAddressesSet(address indexed account, uint256 maxDelegateAddresses);
+    event MaxDelegateAddressesSet(address indexed account, uint256 indexed maxDelegateAddresses);
 
     // ========= STRUCTS ======= //
 

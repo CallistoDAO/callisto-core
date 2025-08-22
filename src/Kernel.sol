@@ -58,7 +58,7 @@ function ensureValidKeycode(Keycode keycode_) pure {
         bytes1 char = unwrapped[i];
         if (char < 0x41 || char > 0x5A) revert InvalidKeycode(keycode_); // A-Z only
         unchecked {
-            i++;
+            ++i;
         }
     }
 }
@@ -354,6 +354,7 @@ contract Kernel {
         uint256 depLength = dependents.length;
 
         for (uint256 i; i < depLength;) {
+            // slither-disable-next-line unused-return
             dependents[i].configureDependencies();
 
             unchecked {

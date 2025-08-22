@@ -8,10 +8,10 @@ import { CallistoToken } from "../../external/CallistoToken.sol";
 abstract contract MINTRv1 is Module {
     // =========  EVENTS ========= //
 
-    event IncreaseMintApproval(address indexed policy_, uint256 newAmount_);
-    event DecreaseMintApproval(address indexed policy_, uint256 newAmount_);
-    event Mint(address indexed policy_, address indexed to_, uint256 amount_);
-    event Burn(address indexed policy_, address indexed from_, uint256 amount_);
+    event IncreaseMintApproval(address indexed policy_, uint256 indexed newAmount_);
+    event DecreaseMintApproval(address indexed policy_, uint256 indexed newAmount_);
+    event Mint(address indexed policy_, address indexed to_, uint256 indexed amount_);
+    event Burn(address indexed policy_, address indexed from_, uint256 indexed amount_);
 
     // ========= ERRORS ========= //
 
@@ -21,7 +21,7 @@ abstract contract MINTRv1 is Module {
 
     // =========  STATE ========= //
 
-    CallistoToken public callToken;
+    CallistoToken public immutable CALL_TOKEN;
 
     /// @notice Status of the minter. If false, minting and burning CALL is disabled.
     bool public active;

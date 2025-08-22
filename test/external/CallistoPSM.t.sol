@@ -212,13 +212,13 @@ contract CallistoPSMTests is CallistoVaultTestBase {
         assertEq(newFee, 5e9);
     }
 
-    function test_callistoPSM_setLP_canOnlyBeCalledOnce() external {
+    function test_callistoPSM_finalizeInitialization() external {
         address newLP = makeAddr("newLP");
 
         // Should revert when trying to set LP again since it's already set in setup
         vm.prank(admin);
         vm.expectRevert(CallistoPSM.AlreadyInitialized.selector);
-        psm.setLP(newLP);
+        psm.finalizeInitialization(newLP);
 
         // Verify the original LP is still set
         assertEq(psm.liquidityProvider(), address(vaultStrategy));

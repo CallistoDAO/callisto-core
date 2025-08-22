@@ -2,6 +2,7 @@
 
 pragma solidity ^0.8.30;
 
+import { Ownable } from "../../dependencies/@openzeppelin-contracts-5.3.0/access/Ownable.sol";
 import { TimelockController } from "../../dependencies/@openzeppelin-contracts-5.3.0/governance/TimelockController.sol";
 import { IERC20 } from "../../dependencies/@openzeppelin-contracts-5.3.0/interfaces/IERC4626.sol";
 import { Math } from "../../dependencies/@openzeppelin-contracts-5.3.0/utils/math/Math.sol";
@@ -11,15 +12,12 @@ import { MockCoolerTreasuryBorrower } from "../mocks/MockCoolerTreasuryBorrower.
 import { MockERC20 } from "../mocks/MockERC20.sol";
 import { MockMonoCooler } from "../mocks/MockMonoCooler.sol";
 import { MockSusds } from "../mocks/MockSusds.sol";
-
-import { Ownable } from "../../dependencies/@openzeppelin-contracts-5.3.0/access/Ownable.sol";
-import { CallistoVaultTestForkBase } from "../test-common/CallistoVaultTestForkBase.sol";
+import { CallistoVaultTestForkCDP } from "../test-common/CallistoVaultTestForkCDP.sol";
 import { DebtTokenMigrator } from "src/external/DebtTokenMigrator.sol";
-
 import { VaultStrategy } from "src/external/VaultStrategy.sol";
 import { CallistoConstants } from "src/libraries/CallistoConstants.sol";
 
-contract DebtTokenMigratorForkTests is CallistoVaultTestForkBase {
+contract DebtTokenMigratorForkTests is CallistoVaultTestForkCDP {
     using SafeCast for *;
     using Math for uint256;
 

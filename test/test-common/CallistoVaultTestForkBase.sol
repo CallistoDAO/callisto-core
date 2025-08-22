@@ -15,15 +15,13 @@ import { CommonRoles } from "../../src/libraries/CommonRoles.sol";
 import { CallistoVault } from "../../src/policies/CallistoVault.sol";
 import { MockCOLLAR } from "../mocks/MockCOLLAR.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
-import { MockStabilityPool } from "../mocks/MockStabilityPool.sol";
 import { IMonoCoolerExtended } from "../test-common/interfaces/IMonoCoolerExtended.sol";
-
 import { CallistoVaultTester } from "../testers/CallstoVaultTester.sol";
 import { Ethereum } from "./ForkConstants.sol";
 import { Actions, KernelTestBase } from "./KernelTestBase.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-contract CallistoVaultTestForkBase is KernelTestBase {
+abstract contract CallistoVaultTestForkBase is KernelTestBase {
     using SafeCast for *;
 
     uint256 public constant MIN_DEPOSIT = 100e9; // 100 OHM is the minimum deposit amount for the Callisto vault.
@@ -55,9 +53,7 @@ contract CallistoVaultTestForkBase is KernelTestBase {
     address public carol;
     address public dennis;
 
-    function setUp() public virtual override {
-        super.setUp();
-
+    function setupVault(address _collar, address stabilityPool) public virtual {
         backend = makeAddr("[ Backend ]");
         heart = makeAddr("[ Heart ]");
         exchanger = makeAddr("[ Exchanger ]");
@@ -68,20 +64,11 @@ contract CallistoVaultTestForkBase is KernelTestBase {
 
         ohm = MockERC20(Ethereum.OHM);
 
-        collar = new MockCOLLAR();
+        collar = MockCOLLAR(_collar);
 
         converterToWadDebt = new ConverterToWadDebt();
 
-        vm.startPrank(admin);
-        MockStabilityPool stabilityPool = new MockStabilityPool(address(collar));
-        vm.stopPrank();
-        psmStrategy = new PSMStrategy(
-            admin,
-            address(stabilityPool),
-            address(collar),
-            makeAddr("[ False auctioneer ]"),
-            makeAddr("[ False Callisto treasury ]")
-        );
+        psmStrategy = new PSMStrategy(admin, address(stabilityPool), makeAddr("[ False Callisto treasury ]"));
 
         // Create timelock with admin as proposer, executor, and canceller
         address[] memory proposers = new address[](1);
@@ -107,7 +94,11 @@ contract CallistoVaultTestForkBase is KernelTestBase {
         vm.label(address(staking), "[ Olympus Staking ]");
         vm.label(address(vaultStrategy), "[ Vault Strategy ]");
         vm.label(address(psm), "[ PSM ]");
+        vm.label(address(psmStrategy), "[ PSM Strategy ]");
         vm.label(address(collar), "[ COLLAR ]");
+        vm.label(address(stabilityPool), "[ Stability Pool ]");
+        vm.label(address(debtTokenMigrator), "[ Debt Token Migrator ]");
+        vm.label(address(vaultStrategy), "[ Vault Strategy ]");
 
         // Deploy the Callisto vault policy.
         vault = new CallistoVaultTester(
@@ -129,7 +120,9 @@ contract CallistoVaultTestForkBase is KernelTestBase {
         // Init COLLAR
         vm.startPrank(admin);
         psm.grantRole(psm.ADMIN_ROLE(), admin);
-        psm.setLP(address(vaultStrategy));
+        psm.finalizeInitialization(address(vaultStrategy));
+        psm.grantRole(psm.KEEPER_ROLE(), address(heart));
+        psmStrategy.grantRole(psmStrategy.ADMIN_ROLE(), admin);
         psmStrategy.finalizeInitialization(address(psm));
 
         vaultStrategy.initVault(address(vault));
@@ -171,14 +164,14 @@ contract CallistoVaultTestForkBase is KernelTestBase {
         (uint256 collarAmount,) = psm.calcCOLLARIn(amount);
         collar.mint(exchanger, collarAmount);
         vm.startPrank(exchanger);
-        collar.approve(address(psm), collarAmount);
+        IERC20(address(collar)).approve(address(psm), collarAmount);
         psm.swapIn(exchanger, amount);
         vm.stopPrank();
     }
 
     function _sellUSDStoPSM(uint256 amount) internal {
         vm.startPrank(exchanger);
-        collar.mint(exchanger, amount);
+        collar.mintByPSM(exchanger, amount);
         vm.stopPrank();
         _usdsMint(exchanger, amount);
         vm.startPrank(exchanger);

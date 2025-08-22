@@ -9,12 +9,13 @@ import { ICallistoVault } from "../../src/interfaces/ICallistoVault.sol";
 import { IMonoCooler } from "../../src/interfaces/IMonoCooler.sol";
 import { IOlympusStaking } from "../../src/interfaces/IOlympusStaking.sol";
 import { IDLGTEv1 } from "../mocks/MockMonoCooler.sol";
-import { CallistoVaultTestForkBase, IMonoCoolerExtended, SafeCast } from "../test-common/CallistoVaultTestForkBase.sol";
+import { IMonoCoolerExtended, SafeCast } from "../test-common/CallistoVaultTestForkBase.sol";
+import { CallistoVaultTestForkCDP } from "../test-common/CallistoVaultTestForkCDP.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // import { console } from "forge-std-1.9.6/Test.sol";
 
-contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
+contract CallistoVaultForkTests is CallistoVaultTestForkCDP {
     using SafeCast for *;
 
     function setUp() public virtual override {
@@ -39,7 +40,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         assertEq(vault.pendingOHMDeposits(), assets, "pending ohm should be tracked");
 
         // We can't easily predict the exact shares due to sUSDS rounding, so just check the event is emitted
-        vm.expectEmit(true, false, false, false, address(psm));
+        vm.expectEmit(false, false, false, false, address(psm));
         emit CallistoPSM.LiquidityAdded(0, 0);
         vm.expectEmit(true, true, true, true, address(vault));
         emit ICallistoVault.DepositsHandled(assets);
@@ -399,6 +400,8 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
             USDS.approve(address(vault), wadDebt);
         }
 
+        uint256 totalReimbursementBefore = vault.totalReimbursementClaim();
+
         // Perform full debt repayment using explicit amount (like the mock test)
         vm.expectEmit(true, true, true, true, address(vault));
         emit ICallistoVault.CoolerDebtRepaid(address(this), wadDebt);
@@ -412,10 +415,20 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         if (withReimbursement) {
             // Reimbursement claim might be different due to strategy availability
             uint256 actualClaim = vault.reimbursementClaims(address(this));
+
+            // TODO: consider to remove this branch or improve the test, as the strategy's funds are always enough here.
+            assertEq(actualClaim, 0);
+
             // In fork tests, the claim might be less than expected due to strategy funds availability
             assertLe(actualClaim, reimbursementValue, "Reimbursement claim should not exceed expected");
+            assertEq(
+                vault.totalReimbursementClaim(),
+                totalReimbursementBefore + actualClaim,
+                "Total reimbursement should properly increase"
+            );
         } else {
             assertEq(vault.reimbursementClaims(address(this)), 0, "Should have no reimbursement claim");
+            assertEq(vault.totalReimbursementClaim(), totalReimbursementBefore, "Total reimbursement should not change");
         }
     }
 
@@ -451,6 +464,8 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
             USDS.approve(address(vault), partialAssets);
         }
 
+        uint256 totalReimbursementBefore = vault.totalReimbursementClaim();
+
         // Perform partial debt repayment
         vm.expectEmit(true, true, true, true, address(vault));
         emit ICallistoVault.CoolerDebtRepaid(address(this), partialAssets);
@@ -464,10 +479,20 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         if (withReimbursement) {
             // Reimbursement claim might be different due to strategy availability
             uint256 actualClaim = vault.reimbursementClaims(address(this));
+
+            // TODO: consider to remove this branch or improve the test, as the strategy's funds are always enough here.
+            assertEq(actualClaim, 0);
+
             // In fork tests, the claim might be less than expected due to strategy funds availability
             assertLe(actualClaim, reimbursementValue, "Reimbursement claim should not exceed expected");
+            assertEq(
+                vault.totalReimbursementClaim(),
+                totalReimbursementBefore + actualClaim,
+                "Total reimbursement should properly increase"
+            );
         } else {
             assertEq(vault.reimbursementClaims(address(this)), 0, "Should have no reimbursement claim");
+            assertEq(vault.totalReimbursementClaim(), totalReimbursementBefore, "Total reimbursement should not change");
         }
     }
 
@@ -496,11 +521,19 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         vm.expectEmit(true, true, true, true, address(vault));
         emit ICallistoVault.ReimbursementClaimAdded(address(this), wadDebt - strategyBalance, wadDebt - strategyBalance);
 
+        uint256 totalReimbursementBefore = vault.totalReimbursementClaim();
+
         vm.expectEmit(true, true, true, true, address(vault));
         emit ICallistoVault.CoolerDebtRepaid(address(this), wadDebt);
         vault.repayCoolerDebt(0);
 
-        assertEq(vault.reimbursementClaims(address(this)), wadDebt - strategyBalance);
+        uint256 reimbursement = vault.reimbursementClaims(address(this));
+        assertEq(reimbursement, wadDebt - strategyBalance);
+        assertEq(
+            vault.totalReimbursementClaim(),
+            totalReimbursementBefore + reimbursement,
+            "Total reimbursement should increase"
+        );
 
         uint128 wadDebtAfter = _getCoolerDebt();
         assertEq(wadDebtAfter, 0, "Cooler debt should be repaid");
@@ -574,6 +607,71 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         assertLe(finalProfit, 5);
     }
 
+    function test_callistoVaultFork_totalProfit_takesIntoAccountReimbursement(uint256 assets, uint256 time) external {
+        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
+        time = bound(time, 0, 365 days);
+
+        // 1. Preparation.
+        // Deposit and process OHM in the vault, and create the debt.
+        _prepareCoolerWithDebt(assets);
+        uint128 wadDebt = _getCoolerDebt();
+        // Empty the PSM so that the `address(this)` can repay the debt to the cooler and receive a reimbursement.
+        uint256 totalAssetsAvailable = vaultStrategy.totalAssetsAvailable();
+        _buyUSDSfromPSM(totalAssetsAvailable);
+        (, uint256 debt) = COOLER.treasuryBorrower().convertToDebtTokenAmount(wadDebt);
+        _usdsMint(address(this), debt);
+        USDS.approve(address(vault), debt);
+
+        // Skip time to accumulate some profit.
+        skip(time);
+        // Save the total profit before adding a reimbursement.
+        uint256 totalProfitBefore = vault.totalProfit();
+
+        assertEq(vault.totalReimbursementClaim(), 0, "Total reimbursement should be zero");
+
+        // Repay the debt to the cooler to receive a reimbursement.
+        vault.repayCoolerDebt(0); // 0 means repaying how much to return to the origination LTV.
+
+        uint256 reimbursement = vault.reimbursementClaims(address(this));
+        assertEq(
+            vault.totalReimbursementClaim(), reimbursement, "Total reimbursement should match the added reimbursement"
+        );
+
+        // 2. Test: validate total profit calculation.
+        // Total profit stays the same, because the debt is reduced by `reimbursement`.
+        assertEq(
+            vault.totalProfit(),
+            totalProfitBefore,
+            "Total profit should stay the same by taking into account the reimbursement"
+        );
+    }
+
+    function test_callistoVaultFork_totalProfit_isZeroWhenDebtGreaterThanDeposited(uint256 assets, uint256 time)
+        external
+    {
+        assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
+        time = bound(time, 0, 365 days);
+
+        // 1. Preparation.
+        // Deposit and process OHM in the vault, and create the debt.
+        _prepareCoolerWithDebt(assets);
+        uint128 wadDebt = _getCoolerDebt();
+        // Empty the PSM so that the `address(this)` can repay the debt to the cooler and receive a reimbursement.
+        uint256 totalAssetsAvailable = vaultStrategy.totalAssetsAvailable();
+        _buyUSDSfromPSM(totalAssetsAvailable);
+        (, uint256 debt) = COOLER.treasuryBorrower().convertToDebtTokenAmount(wadDebt);
+        _usdsMint(address(this), debt);
+        USDS.approve(address(vault), debt);
+
+        assertEq(vault.totalProfit(), 0, "Total profit should be zero");
+
+        // Repay the debt to the cooler to receive a reimbursement.
+        vault.repayCoolerDebt(0); // 0 means repaying how much to return to the origination LTV.
+
+        // 2. Test: validate that no profit.
+        assertEq(vault.totalProfit(), 0, "Total profit should be zero");
+    }
+
     // Test withdrawal with PSM having insufficient USDS and claim reimbursement using fork logic
     function test_callistoVaultFork_withdrawPSMhasInsufficientUSDS_WithClaimReimbursement(uint256 assets) external {
         assets = bound(assets, MIN_DEPOSIT + 1, MAX_DEPOSIT);
@@ -600,12 +698,19 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 claimAmount = vault.reimbursementClaims(address(user));
         _usdsMint(address(vault), claimAmount);
 
+        uint256 totalReimbursementBefore = vault.totalReimbursementClaim();
+
         // claim reimbursement for user
         vault.claimReimbursement(user);
         assertApproxEqAbs(
             USDS.balanceOf(address(user)), claimAmount, 10, "User should receive reimbursement claim amount"
         );
         assertEq(vault.reimbursementClaims(address(user)), 0);
+        assertEq(
+            vault.totalReimbursementClaim(),
+            totalReimbursementBefore - claimAmount,
+            "Total reimbursement should decrease"
+        );
     }
 
     // Test partial withdrawal of excess gOHM using fork logic
@@ -885,6 +990,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created and PSM has no balance
         uint256 reimbursementClaim = vault.reimbursementClaims(address(this));
         assertEq(reimbursementClaim, wadDebt, "Reimbursement claim should equal debt repaid");
+        assertEq(vault.totalReimbursementClaim(), reimbursementClaim, "Total reimbursement should increase");
         assertEq(vaultStrategy.totalAssetsAvailable(), 0, "PSM should have no USDS available");
 
         // Add USDS to PSM by having another user deposit (similar to original test pattern)
@@ -899,7 +1005,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
 
         // Claim reimbursement from PSM
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), reimbursementClaim, wadDebt);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), reimbursementClaim, wadDebt);
         vault.claimReimbursement(address(this));
 
         // Verify user received the reimbursement from PSM
@@ -911,6 +1017,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
 
         // Verify reimbursement claim is cleared
         assertEq(vault.reimbursementClaims(address(this)), 0, "Reimbursement claim should be cleared");
+        assertEq(vault.totalReimbursementClaim(), 0, "Total reimbursement should be emptied");
     }
 
     // Test partial reimbursement claim specifically from PSM using fork logic (migrated from CallistoVault.t.sol)
@@ -944,6 +1051,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created and PSM has no balance
         uint256 reimbursementClaim = vault.reimbursementClaims(address(this));
         assertEq(reimbursementClaim, wadDebt, "Reimbursement claim should equal debt repaid");
+        assertEq(vault.totalReimbursementClaim(), reimbursementClaim, "Total reimbursement should increase");
         assertEq(vaultStrategy.totalAssetsAvailable(), 0, "PSM should have no USDS available");
 
         // Add USDS to PSM by having another user deposit (similar to original test pattern)
@@ -962,7 +1070,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
 
         // Claim partial reimbursement from PSM
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), partialAmountInWad, partialAmount);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), partialAmountInWad, partialAmount);
         vault.claimReimbursementPartial(address(this), partialAmount);
 
         // Verify user received the partial reimbursement from PSM
@@ -976,6 +1084,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 remainingClaim = vault.reimbursementClaims(address(this));
         assertGt(remainingClaim, 0, "Should have remaining claim");
         assertLt(remainingClaim, reimbursementClaim, "Remaining should be less than original");
+        assertEq(vault.totalReimbursementClaim(), remainingClaim, "Total reimbursement should be decreased");
 
         // Verify the remaining claim is approximately correct (allow for precision differences)
         uint256 expectedRemaining = reimbursementClaim - partialAmountInWad;
@@ -1013,6 +1122,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created and PSM has no balance
         uint256 reimbursementClaim = vault.reimbursementClaims(address(this));
         assertEq(reimbursementClaim, wadDebt, "Reimbursement claim should equal debt repaid");
+        assertEq(vault.totalReimbursementClaim(), reimbursementClaim, "Total reimbursement should increase");
         assertEq(vaultStrategy.totalAssetsAvailable(), 0, "PSM should have no USDS available");
 
         // Ensure we have enough funds in PSM for multiple claims by having user2 deposit more
@@ -1030,7 +1140,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 firstPartialInWad = vault.debtConverterToWad().toWad(firstPartial);
 
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), firstPartialInWad, firstPartial);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), firstPartialInWad, firstPartial);
         vault.claimReimbursementPartial(address(this), firstPartial);
 
         // Verify first claim
@@ -1042,13 +1152,14 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 claimAfterFirst = vault.reimbursementClaims(address(this));
         assertGt(claimAfterFirst, 0, "Should have remaining claim after first");
         assertLt(claimAfterFirst, reimbursementClaim, "Should be less than original after first");
+        assertEq(vault.totalReimbursementClaim(), claimAfterFirst, "Total reimbursement should be decreased");
 
         // Second partial claim (another 1/4 of original total)
         uint256 secondPartial = wadDebt / 4;
         uint256 secondPartialInWad = vault.debtConverterToWad().toWad(secondPartial);
 
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), secondPartialInWad, secondPartial);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), secondPartialInWad, secondPartial);
         vault.claimReimbursementPartial(address(this), secondPartial);
 
         // Verify second claim
@@ -1062,6 +1173,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 claimAfterSecond = vault.reimbursementClaims(address(this));
         assertGt(claimAfterSecond, 0, "Should have remaining claim after second");
         assertLt(claimAfterSecond, claimAfterFirst, "Should be less than after first claim");
+        assertEq(vault.totalReimbursementClaim(), claimAfterSecond, "Total reimbursement should be decreased");
 
         // Final claim for remaining amount (remaining 1/2 of original total)
         uint256 remainingDebt = wadDebt - firstPartial - secondPartial;
@@ -1077,6 +1189,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim is fully cleared
         uint256 finalClaim = vault.reimbursementClaims(address(this));
         assertEq(finalClaim, 0, "Reimbursement claim should be completely cleared");
+        assertEq(vault.totalReimbursementClaim(), 0, "Total reimbursement should be emptied");
     }
 
     // Test partial reimbursement claim from both PSM and vault direct balance using fork logic
@@ -1110,6 +1223,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created and PSM has no balance
         uint256 reimbursementClaim = vault.reimbursementClaims(address(this));
         assertEq(reimbursementClaim, wadDebt, "Reimbursement claim should equal debt repaid");
+        assertEq(vault.totalReimbursementClaim(), reimbursementClaim, "Total reimbursement should be increased");
         assertEq(vaultStrategy.totalAssetsAvailable(), 0, "PSM should have no USDS available");
 
         // Create split funding scenario (like original test):
@@ -1130,7 +1244,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
 
         // Claim partial reimbursement that should pull from both sources
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), partialAmountInWad, partialAmount);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), partialAmountInWad, partialAmount);
         vault.claimReimbursementPartial(address(this), partialAmount);
 
         // Verify user received the partial reimbursement
@@ -1144,6 +1258,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 remainingClaim = vault.reimbursementClaims(address(this));
         assertGt(remainingClaim, 0, "Should have remaining claim");
         assertLt(remainingClaim, reimbursementClaim, "Remaining should be less than original");
+        assertEq(vault.totalReimbursementClaim(), remainingClaim, "Total reimbursement should be decreased");
 
         // Verify the remaining claim is approximately correct (allow for precision differences)
         uint256 expectedRemaining = reimbursementClaim - partialAmountInWad;
@@ -1181,6 +1296,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created and PSM has no balance
         uint256 reimbursementClaim = vault.reimbursementClaims(address(this));
         assertEq(reimbursementClaim, wadDebt, "Reimbursement claim should equal debt repaid");
+        assertEq(vault.totalReimbursementClaim(), reimbursementClaim, "Total reimbursement should be increased");
         assertEq(vaultStrategy.totalAssetsAvailable(), 0, "PSM should have no USDS available");
 
         // Ensure we have funds in PSM by having user2 deposit more assets
@@ -1198,7 +1314,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 exactAmountInWad = vault.debtConverterToWad().toWad(exactAmount);
 
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), exactAmountInWad, exactAmount);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), exactAmountInWad, exactAmount);
         vault.claimReimbursementPartial(address(this), exactAmount);
 
         // Verify user received the exact debt amount
@@ -1210,6 +1326,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
 
         // Verify reimbursement claim is completely cleared (since we claimed the exact amount)
         assertEq(vault.reimbursementClaims(address(this)), 0, "Reimbursement claim should be completely cleared");
+        assertEq(vault.totalReimbursementClaim(), 0, "Total reimbursement should be emptied");
     }
 
     // Test error cases for partial reimbursement claims using fork logic
@@ -1243,6 +1360,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created
         uint256 storedClaim = vault.reimbursementClaims(address(this));
         assertGt(storedClaim, 0, "Should have a reimbursement claim");
+        assertEq(vault.totalReimbursementClaim(), storedClaim, "Total reimbursement should be increased");
 
         // Test Error Case 1: Zero amount should revert
         vm.expectRevert(abi.encodeWithSelector(ICallistoVault.ZeroValue.selector));
@@ -1272,13 +1390,14 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 validPartialInWad = vault.debtConverterToWad().toWad(validPartial);
 
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), validPartialInWad, validPartial);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), validPartialInWad, validPartial);
         vault.claimReimbursementPartial(address(this), validPartial);
 
         // Check that remaining claim is properly updated
         uint256 remainingClaim = vault.reimbursementClaims(address(this));
         assertGt(remainingClaim, 0, "Should have remaining claim");
         assertLt(remainingClaim, storedClaim, "Remaining should be less than original");
+        assertEq(vault.totalReimbursementClaim(), remainingClaim, "Total reimbursement should be decreased");
 
         // Verify the remaining claim is approximately correct (allow for precision differences in fork)
         uint256 expectedRemaining = storedClaim - validPartialInWad;
@@ -1316,6 +1435,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         // Verify reimbursement claim was created and PSM has no balance
         uint256 reimbursementClaim = vault.reimbursementClaims(address(this));
         assertEq(reimbursementClaim, wadDebt, "Reimbursement claim should equal debt repaid");
+        assertEq(vault.totalReimbursementClaim(), reimbursementClaim, "Total reimbursement should be increased");
         assertEq(vaultStrategy.totalAssetsAvailable(), 0, "PSM should have no USDS available");
 
         // Add USDS directly to vault (not to PSM strategy)
@@ -1330,7 +1450,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 vaultInitialBalance = USDS.balanceOf(address(vault));
 
         vm.expectEmit(true, true, true, true, address(vault));
-        emit ICallistoVault.ReimbursementClaimSubstructed(address(this), partialAmountInWad, partialAmount);
+        emit ICallistoVault.ReimbursementClaimRemoved(address(this), partialAmountInWad, partialAmount);
         vault.claimReimbursementPartial(address(this), partialAmount);
 
         // Verify user received the partial amount
@@ -1349,6 +1469,7 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestForkBase {
         uint256 remainingClaim = vault.reimbursementClaims(address(this));
         assertGt(remainingClaim, 0, "Should have remaining claim");
         assertLt(remainingClaim, reimbursementClaim, "Remaining should be less than original");
+        assertEq(vault.totalReimbursementClaim(), remainingClaim, "Total reimbursement should be decreased");
 
         // Verify the remaining claim is approximately correct (allow for precision differences in fork)
         uint256 expectedRemaining = reimbursementClaim - partialAmountInWad;

@@ -325,7 +325,7 @@
       {
         "name": "amount",
         "type": "int256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "int256"
       }
     ],
@@ -344,7 +344,7 @@
       {
         "name": "maxDelegateAddresses",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],

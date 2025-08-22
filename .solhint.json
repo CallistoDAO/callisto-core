@@ -3,6 +3,7 @@
     "imports-on-top": "error",
     "no-global-import": "warn",
     "no-unused-import": "error",
-    "no-unused-vars": "error"
+    "no-unused-vars": "error",
+    "use-natspec": "off"
   }
 }

@@ -52,8 +52,8 @@ contract CallistoVaultTestBase is KernelTestBase {
 
     bytes public err;
 
-    function setUp() public virtual override {
-        super.setUp();
+    function setUp() public virtual {
+        super.setUpKernel();
 
         multisig = makeAddr("[ Multisig ]");
         heart = makeAddr("[ Heart ]");
@@ -77,13 +77,7 @@ contract CallistoVaultTestBase is KernelTestBase {
         vm.startPrank(admin);
         stabilityPool = new MockStabilityPool(address(collar));
         vm.stopPrank();
-        psmStrategy = new PSMStrategy(
-            admin,
-            address(stabilityPool),
-            address(collar),
-            makeAddr("[ False auctioneer ]"),
-            makeAddr("[ False Callisto treasury ]")
-        );
+        psmStrategy = new PSMStrategy(admin, address(stabilityPool), makeAddr("[ False Callisto treasury ]"));
 
         // Create timelock with admin as proposer, executor, and canceller
         address[] memory proposers = new address[](1);
@@ -108,7 +102,11 @@ contract CallistoVaultTestBase is KernelTestBase {
         vm.label(address(cooler), "[ Olympus Cooler ]");
         vm.label(address(staking), "[ Olympus Staking ]");
         vm.label(address(psm), "[ PSM ]");
+        vm.label(address(psmStrategy), "[ PSM Strategy ]");
         vm.label(address(collar), "[ COLLAR ]");
+        vm.label(address(stabilityPool), "[ Stability Pool ]");
+        vm.label(address(debtTokenMigrator), "[ Debt Token Migrator ]");
+        vm.label(address(vaultStrategy), "[ Vault Strategy ]");
 
         // Deploy the Callisto vault policy.
         vault = new CallistoVaultTester(
@@ -129,7 +127,9 @@ contract CallistoVaultTestBase is KernelTestBase {
         // Init COLLAR
         vm.startPrank(admin);
         psm.grantRole(psm.ADMIN_ROLE(), admin);
-        psm.setLP(address(vaultStrategy));
+        psm.finalizeInitialization(address(vaultStrategy));
+        psm.grantRole(psm.KEEPER_ROLE(), address(heart));
+        psmStrategy.grantRole(psmStrategy.ADMIN_ROLE(), admin);
         psmStrategy.finalizeInitialization(address(psm));
 
         vaultStrategy.initVault(address(vault));

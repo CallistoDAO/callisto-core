@@ -488,7 +488,7 @@
       {
         "name": "paused",
         "type": "bool",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bool"
       }
     ],
@@ -649,7 +649,7 @@
   },
   {
     "type": "event",
-    "name": "ReimbursementClaimSubstructed",
+    "name": "ReimbursementClaimRemoved",
     "inputs": [
       {
         "name": "account",
@@ -692,7 +692,7 @@
       {
         "name": "paused",
         "type": "bool",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bool"
       }
     ],

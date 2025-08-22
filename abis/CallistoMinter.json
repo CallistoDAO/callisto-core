@@ -17,6 +17,19 @@
   },
   {
     "type": "function",
+    "name": "CALL_TOKEN",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract CallistoToken"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "INIT",
     "inputs": [],
     "outputs": [],
@@ -90,19 +103,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "callToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract CallistoToken"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -229,7 +229,7 @@
       {
         "name": "amount_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -248,7 +248,7 @@
       {
         "name": "newAmount_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -267,7 +267,7 @@
       {
         "name": "newAmount_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -292,7 +292,7 @@
       {
         "name": "amount_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],

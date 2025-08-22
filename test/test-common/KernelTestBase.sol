@@ -24,10 +24,12 @@ abstract contract KernelTestBase is Test {
     CallistoVaultTester public vault;
     MockERC20 public ohm;
 
-    function setUp() public virtual {
+    constructor() {
         accounts = (new CommonUtilities()).createAccounts(3, "account");
         admin = makeAddr("[ Admin ]");
+    }
 
+    function setUpKernel() public virtual {
         // Deploy Kernel and roles.
         kernel = new Kernel();
         roles = new CallistoRoles(kernel);

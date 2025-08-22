@@ -46,14 +46,14 @@ contract VaultStrategy is Ownable {
      * @notice Emitted when assets are deposited into the yield vault by the Callisto vault.
      * @param assets The amount of assets deposited.
      */
-    event Invested(uint256 assets);
+    event Invested(uint256 indexed assets);
 
     /**
      * @notice Emitted when assets are withdrawn from the yield vault.
      * @param receiver Recipient of withdrawn assets.
      * @param assets The amount of assets withdrawn.
      */
-    event Divested(address indexed receiver, uint256 assets);
+    event Divested(address indexed receiver, uint256 indexed assets);
 
     /**
      * @notice Emitted when asset and yield vault migration.
@@ -61,13 +61,13 @@ contract VaultStrategy is Ownable {
      * @param newAsset The new debt token address.
      * @param newYieldVault The new ERC4626 yield vault address.
      */
-    event AssetMigrated(address newAsset, address newYieldVault);
+    event AssetMigrated(address indexed newAsset, address indexed newYieldVault);
 
     /**
      * @dev Emitted when the vault address is set.
      * @param vault The vault address.
      */
-    event VaultInitialized(address vault);
+    event VaultInitialized(address indexed vault);
 
     /**
      * @notice Emitted when the debt token migrator address is updated

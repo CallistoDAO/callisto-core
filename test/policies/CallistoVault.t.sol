@@ -134,6 +134,12 @@ contract CallistoVaultRestrictedFuncTests is CallistoVaultTestBase {
         vault.setSwapMode(address(swapper));
     }
 
+    function test_callistoVault_setActiveWarmupMode_revertsIfZeroPeriod() external {
+        vm.prank(admin);
+        vm.expectRevert(abi.encodeWithSelector(ICallistoVault.InvalidWarmupPeriod.selector, 0));
+        vault.setActiveWarmupMode();
+    }
+
     function test_callistoVault_setZeroWarmupMode_successAfterCancelingStake() external {
         uint256 assets = vault.minDeposit();
         ohm.mint(user, assets);
@@ -1284,7 +1290,7 @@ contract CallistoVaultWithdrawTests is CallistoVaultTestBase {
 contract CallistoVaultViewerTests is CallistoVaultTestBase {
     using SafeCast for *;
 
-    function test_callistoVault_calcDebtToRepay_noDebt() external {
+    function test_callistoVault_calcDebtToRepay_noDebt() external view {
         // When vault has no position in Cooler, should return (0, 0)
         (uint128 wadDebt, uint256 debtAmount) = vault.calcDebtToRepay();
         assertEq(wadDebt, 0);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.30;
 
 library CommonRoles {
     /// @dev Administrative access, e.g. configuration parameters. Typically assigned to on-chain governance.

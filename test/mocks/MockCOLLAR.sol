@@ -15,7 +15,7 @@ contract MockCOLLAR is MockERC20, ICOLLAR {
         _burn(from, value);
     }
 
-    function sendToPool(address sender, uint256 amount) external {
+    function sendToPool(address sender, uint256 amount) external override {
         _transfer(sender, msg.sender, amount);
     }
 }

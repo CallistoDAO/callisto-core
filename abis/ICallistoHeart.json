@@ -55,19 +55,6 @@
   },
   {
     "type": "function",
-    "name": "setCallistoVault",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setFrequency",
     "inputs": [
       {
@@ -81,10 +68,10 @@
   },
   {
     "type": "function",
-    "name": "setPSMStrategy",
+    "name": "setPSM",
     "inputs": [
       {
-        "name": "psmStrategy",
+        "name": "psm",
         "type": "address",
         "internalType": "address"
       }
@@ -111,6 +98,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setVault",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "Activated",
     "inputs": [],
@@ -123,21 +123,8 @@
       {
         "name": "timestamp_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CallistoVaultSet",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -155,7 +142,7 @@
       {
         "name": "frequency",
         "type": "uint48",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint48"
       }
     ],
@@ -163,12 +150,12 @@
   },
   {
     "type": "event",
-    "name": "PSMStrategySet",
+    "name": "PSMSet",
     "inputs": [
       {
-        "name": "strategy",
+        "name": "psm",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       }
     ],
@@ -181,13 +168,13 @@
       {
         "name": "to_",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "rewardAmount_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -200,14 +187,27 @@
       {
         "name": "maxRewardAmount_",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
         "name": "auctionDuration_",
         "type": "uint48",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint48"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VaultSet",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false

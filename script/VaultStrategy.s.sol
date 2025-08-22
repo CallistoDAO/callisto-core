@@ -26,7 +26,7 @@ contract DeployVaultStrategy is BaseScript {
         if (callistoPSM.liquidityProvider() != strategy) {
             console.log("Setting LP to:", strategy);
             vm.startBroadcast(deployer);
-            callistoPSM.setLP(strategy);
+            callistoPSM.finalizeInitialization(strategy);
             vm.stopBroadcast();
         } else {
             console.log("LP already set to", callistoPSM.liquidityProvider());

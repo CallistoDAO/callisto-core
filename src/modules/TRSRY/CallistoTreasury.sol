@@ -2,14 +2,14 @@
 
 pragma solidity 0.8.30;
 
+import { IERC20, SafeERC20 } from "../../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/utils/SafeERC20.sol";
 import { ERC20 } from "../../../dependencies/solmate-6.8.0/src/tokens/ERC20.sol";
 import { Kernel, Keycode, Module } from "../../Kernel.sol";
-import { TransferHelper } from "../../libraries/TransferHelper.sol";
 import { TRSRYv1 } from "./TRSRY.v1.sol";
 
 /// @notice Treasury holds all other assets under the control of the protocol.
 contract CallistoTreasury is TRSRYv1 {
-    using TransferHelper for ERC20;
+    using SafeERC20 for IERC20;
 
     //============================================================================================//
     //                                      MODULE SETUP                                          //
@@ -56,7 +56,7 @@ contract CallistoTreasury is TRSRYv1 {
     /// @inheritdoc TRSRYv1
     function withdrawReserves(address to, ERC20 token, uint256 amount) public override permissioned onlyWhileActive {
         withdrawApproval[msg.sender][token] -= amount;
-        token.safeTransfer(to, amount);
+        IERC20(address(token)).safeTransfer(to, amount);
         emit Withdrawal(msg.sender, to, token, amount);
     }
 

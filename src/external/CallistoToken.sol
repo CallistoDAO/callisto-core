@@ -11,7 +11,7 @@ import {
 import { ERC20Votes } from "../../dependencies/@openzeppelin-contracts-5.3.0/token/ERC20/extensions/ERC20Votes.sol";
 
 /// @notice The governance token of the Callisto protocol.
-contract CallistoToken is AccessControl, ERC20, ERC20Permit, ERC20Votes {
+contract CallistoToken is AccessControl, ERC20Permit, ERC20Votes {
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
     error AdminEqZeroAddress();

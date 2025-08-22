@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.30;
 
 import { IDLGTEv1 } from "./IDLGTEv1.sol";
 
@@ -63,7 +63,7 @@ interface ICallistoVault {
      * @param removedAmount The amount of reimbursement claim that was removed (in wad format)
      * @param debt The debt token amount that corresponds to the removed claim
      */
-    event ReimbursementClaimSubstructed(address indexed account, uint256 indexed removedAmount, uint256 indexed debt);
+    event ReimbursementClaimRemoved(address indexed account, uint256 indexed removedAmount, uint256 indexed debt);
 
     /**
      * @notice Emitted when the minimum deposit amount is updated
@@ -88,13 +88,13 @@ interface ICallistoVault {
      * @notice Emitted when deposit pause status changes
      * @param paused True if deposits are now paused, false if unpaused
      */
-    event DepositPauseStatusChanged(bool paused);
+    event DepositPauseStatusChanged(bool indexed paused);
 
     /**
      * @notice Emitted when withdrawal pause status changes
      * @param paused True if withdrawals are now paused, false if unpaused
      */
-    event WithdrawalPauseStatusChanged(bool paused);
+    event WithdrawalPauseStatusChanged(bool indexed paused);
 
     /**
      * @notice Emitted when the debt token is updated to a new token

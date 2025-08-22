@@ -23,7 +23,7 @@
         "internalType": "address"
       },
       {
-        "name": "psmStrategy_",
+        "name": "psmStrategy",
         "type": "address",
         "internalType": "address"
       }
@@ -84,6 +84,32 @@
   },
   {
     "type": "function",
+    "name": "KEEPER_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "MANAGER_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "ONE_HUNDRED_PERCENT",
     "inputs": [],
     "outputs": [
@@ -120,6 +146,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "burnExcessCOLLAR",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -171,6 +204,19 @@
   },
   {
     "type": "function",
+    "name": "collarPendingBurning",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "debtTokenMigrator",
     "inputs": [],
     "outputs": [
@@ -181,6 +227,26 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "excessCOLLAR",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "execute",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -207,6 +273,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "finalizeInitialization",
+    "inputs": [
+      {
+        "name": "lp",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -317,13 +396,26 @@
   },
   {
     "type": "function",
-    "name": "psmStrategy",
+    "name": "migrateToNewStrategy",
+    "inputs": [
+      {
+        "name": "newStrategy",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "minBurningAmount",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "address",
-        "internalType": "contract PSMStrategy"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -457,16 +549,29 @@
   },
   {
     "type": "function",
-    "name": "setLP",
+    "name": "setMinBurningAmount",
     "inputs": [
       {
-        "name": "lp",
-        "type": "address",
-        "internalType": "address"
+        "name": "collarAmount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "strategy",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract PSMStrategy"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -598,19 +703,6 @@
   },
   {
     "type": "function",
-    "name": "testSetPSMStrategy",
-    "inputs": [
-      {
-        "name": "strategy",
-        "type": "address",
-        "internalType": "contract PSMStrategy"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "to18DecimalsMultiplier",
     "inputs": [],
     "outputs": [
@@ -708,13 +800,13 @@
       {
         "name": "collarOut",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
         "name": "assetsIn",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
@@ -739,13 +831,13 @@
       {
         "name": "collarIn",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
         "name": "assetsOut",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
@@ -783,7 +875,7 @@
       {
         "name": "value",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -796,7 +888,7 @@
       {
         "name": "value",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -809,7 +901,7 @@
       {
         "name": "lp",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       }
     ],
@@ -822,13 +914,13 @@
       {
         "name": "shares",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
         "name": "newLPBalance",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -841,13 +933,45 @@
       {
         "name": "shares",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
         "name": "newLPBalance",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MigratedToNewStrategy",
+    "inputs": [
+      {
+        "name": "oldStrategy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newStrategy",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MinBurningAmountSet",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": true,
         "internalType": "uint256"
       }
     ],
@@ -982,6 +1106,11 @@
   },
   {
     "type": "error",
+    "name": "MismatchedDebtTokenAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotFeeExempt",
     "inputs": [
       {
@@ -1005,6 +1134,11 @@
   {
     "type": "error",
     "name": "OnlyLP",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyStrategy",
     "inputs": []
   },
   {

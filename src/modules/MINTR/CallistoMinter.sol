@@ -11,7 +11,7 @@ contract CallistoMinter is MINTRv1 {
     //============================================================================================//
 
     constructor(Kernel kernel_, address callToken_) Module(kernel_) {
-        callToken = CallistoToken(callToken_);
+        CALL_TOKEN = CallistoToken(callToken_);
         active = true;
     }
 
@@ -41,7 +41,7 @@ contract CallistoMinter is MINTRv1 {
             mintApproval[msg.sender] = approval - amount_;
         }
 
-        callToken.mint(to_, amount_);
+        CALL_TOKEN.mint(to_, amount_);
 
         emit Mint(msg.sender, to_, amount_);
     }
@@ -50,7 +50,7 @@ contract CallistoMinter is MINTRv1 {
     function burnCALL(address from_, uint256 amount_) external override permissioned onlyWhileActive {
         if (amount_ == 0) revert MINTR_ZeroAmount();
 
-        callToken.burnFrom(from_, amount_);
+        CALL_TOKEN.burnFrom(from_, amount_);
 
         emit Burn(msg.sender, from_, amount_);
     }

@@ -10,11 +10,9 @@ contract DeployPSMStrategy is BaseScript {
     function run() public {
         address defaultAdmin = _envAddress("CALLISTO_ADMIN");
         address stabilityPool = _envAddress("DEPLOYED_STABILITY_POOL");
-        address collar = _envAddress("DEPLOYED_DEBT_TOKEN");
-        address auctioneer = address(0); // TODO: Change this later to deployed contract
         address treasury = _envAddress("DEPLOYED_CALLISTO_TREASURY");
 
-        bytes memory encodedArgs = abi.encode(defaultAdmin, stabilityPool, collar, auctioneer, treasury);
+        bytes memory encodedArgs = abi.encode(defaultAdmin, stabilityPool, treasury);
         bytes memory initCode = abi.encodePacked(type(PSMStrategy).creationCode, encodedArgs);
         string memory name = type(PSMStrategy).name;
         _deploy(name, "DEPLOYED_PSM_STRATEGY", _SALT, initCode, true);

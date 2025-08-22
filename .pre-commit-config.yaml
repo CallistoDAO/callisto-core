@@ -82,16 +82,17 @@ repos:
         name: solhint https://github.com/protofire/solhint/blob/develop/docs/rules.md .
         entry: solhint
         language: node
-        additional_dependencies: [solhint@5.1.0]
+        additional_dependencies: [solhint@6.0.0]
         files: \.sol$
+        exclude: ^(.*/IMonoCooler.sol|.*/IOlympusAuthority.sol)$
         args: ["--formatter", "unix", "--max-warnings", "0"]
       - id: solhint-src
         name: solhint src/ https://github.com/protofire/solhint/blob/develop/docs/rules.md .
         entry: solhint
         language: node
-        additional_dependencies: [solhint@5.1.0]
+        additional_dependencies: [solhint@6.0.0]
         files: \.sol$
-        exclude: ^(test/.*|script/.*)$
+        exclude: ^(test/.*|script/.*|.*/IMonoCooler.sol|.*/IOlympusAuthority.sol)$
         args: ["--formatter", "unix", "--config", "src/.solhint.json", "--max-warnings", "0"]
       - id: generate-abis
         name: generate abi for contracts
@@ -99,6 +100,12 @@ repos:
         entry: pnpm run generate-abi
         language: system
         pass_filenames: false
+#      - id: forge-lint
+#        name: Linting using forge
+#        description: Linting using forge.
+#        entry: forge lint
+#        language: system
+#        pass_filenames: false
 #      - id: forge-test
 #        name: forge tests https://book.getfoundry.sh/forge/tests .
 #        description: Forge tests.

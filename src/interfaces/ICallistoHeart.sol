@@ -5,12 +5,12 @@ pragma solidity ^0.8.4;
 interface ICallistoHeart {
     // =========  EVENTS ========= //
 
-    event Beat(uint256 timestamp_);
-    event RewardIssued(address to_, uint256 rewardAmount_);
-    event RewardUpdated(uint256 maxRewardAmount_, uint48 auctionDuration_);
-    event FrequencySet(uint48 frequency);
-    event CallistoVaultSet(address vault);
-    event PSMStrategySet(address strategy);
+    event Beat(uint256 indexed timestamp_);
+    event RewardIssued(address indexed to_, uint256 indexed rewardAmount_);
+    event RewardUpdated(uint256 indexed maxRewardAmount_, uint48 indexed auctionDuration_);
+    event FrequencySet(uint48 indexed frequency);
+    event VaultSet(address indexed vault);
+    event PSMSet(address indexed psm);
     event Activated();
     event Deactivated();
 
@@ -73,18 +73,18 @@ interface ICallistoHeart {
     function setRewardAuctionParams(uint256 maxReward_, uint48 auctionDuration_) external;
 
     /**
-     * @notice Sets the Callisto vault address to `callistoVault`.
+     * @notice Sets the Callisto vault address to `vault`.
      *
      * Requires the caller to have the role `HEART_ADMIN_ROLE`.
      */
-    function setCallistoVault(address vault) external;
+    function setVault(address vault) external;
 
     /**
-     * @notice Sets the address of the COLLAR burning strategy of the Callisto PSM to `psmStrategy`.
+     * @notice Sets the address of the Callisto PSM to `psm`.
      *
      * Requires the caller to have the role `HEART_ADMIN_ROLE`.
      */
-    function setPSMStrategy(address psmStrategy) external;
+    function setPSM(address psm) external;
 
     /**
      * @notice Sets the heartbeat frequency to `freq` (in seconds).

@@ -76,7 +76,7 @@ contract CallistoRoles is ROLESv1 {
                 revert ROLES_InvalidRole(role_); // a-z only
             }
             unchecked {
-                i++;
+                ++i;
             }
         }
     }
